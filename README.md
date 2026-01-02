@@ -1,4 +1,7 @@
 updated with new concoction recipes, buff bar, buff tracking, and dynamic icons
+updated itemlist to include the spell id's related to the buff items
+uses superwow's updated UnitBuff() function to track buffs based on spell id returned
+uses superwow's updated GetWeaponEnchantInfo() to track mainhand and offhand weapon buffs.
 type /cmbar to show/hide the buff bar
 
 
