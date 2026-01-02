@@ -1,3 +1,7 @@
+updated with new concoction recipes, buff bar, buff tracking, and dynamic icons
+type /cmbar to show/hide the buff bar
+
+
 # Consumes Manager
 Easily track and manage your consumables, food buffs, and more across your inventory, bank, and mail, while supporting multiple characters and accounts.
 Created with ♥ by Horyoshi for World of Warcraft 1.12 **Turtle WoW**
