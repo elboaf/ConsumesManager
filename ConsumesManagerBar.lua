@@ -639,12 +639,24 @@ function ConsumesManagerBar_ToggleVisibility(itemID)
 end
 
 function ConsumesManagerBar_UseItem(itemID)
-    -- Use the same function as ConsumesManager's Use button
+    -- Store target state before using item
+    local hadTarget = UnitExists("target")
+    local wasTargetingPlayer = UnitIsUnit("player", "target")
+    TargetUnit("player")
     local bag, slot = ConsumesManager_FindItemInBags(itemID)
     if bag and slot then
         UseContainerItem(bag, slot)
     else
         DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar: Item not found in bags.")
+    end
+    
+    -- Restore previous target if needed
+    if hadTarget and not wasTargetingPlayer then
+        -- Restore the original target
+        TargetLastTarget()
+    elseif not hadTarget then
+        -- Clear target if we had none originally
+        ClearTarget()
     end
 end
 
