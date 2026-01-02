@@ -4,6 +4,9 @@ uses superwow's updated UnitBuff() function to track buffs based on spell id ret
 uses superwow's updated GetWeaponEnchantInfo() to track mainhand and offhand weapon buffs.
 type /cmbar to show/hide the buff bar
 
+forked from https://github.com/Cinecom/ConsumesManager
+
+original readme below:
 
 # Consumes Manager
 Easily track and manage your consumables, food buffs, and more across your inventory, bank, and mail, while supporting multiple characters and accounts.
