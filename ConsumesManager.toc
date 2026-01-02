@@ -1,0 +1,18 @@
+## Interface: 11200
+## Title: |cff00ff00Consumes Manager|r |cff808080[Horyoshi]|r
+## Notes: Easily track and manage your consumables, food buffs, and more across your inventory, bank, and mail, while supporting multiple characters and accounts.
+## Author: Horyoshi
+## Version: 2.1.5
+## SavedVariables: ConsumesManager_Options, ConsumesManager_SelectedItems, ConsumesManager_Data
+## SavedVariablesPerCharacter: ConsumesManagerBar_Settings2
+
+libs\LibStub\LibStub.lua
+libs\LibCompress\LibCompress.lua
+libs\LibCompress\LibCompress.xml
+libs\LzwLib-1.0\LzwLib-1.0.lua
+
+Main.lua
+Itemlist.lua
+Classpresets.lua
+ConsumesManagerBar.lua
+minimap_icon.xml
