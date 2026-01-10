@@ -130,6 +130,7 @@ consumablesCategories = {
         { id = 9088, name = "Gift of Arthas", mats = {"1x Arthas' Tears", "1x Blindweed", "1x Crystal Vial"}, texture = "Interface\\Icons\\INV_Potion_28", description = "Gain 10 shadow resistance for 30 minutes. Attackers have a 30% chance of increasing their damage taken by 8 for 3 minutes.", priority = 3, spellId = 11371 },
         { id = 10305, name = "Scroll of Protection IV", mats = {"Looted from various world NPC's"}, texture = "Interface\\Icons\\INV_Scroll_07", description = "Increases the target's Armor by 240 for 30 minutes.", priority = 3, spellId = 12175 },
         { id = 11564, name = "Crystal Ward", mats = {"Red Power Crystal Red(10), Green Power Crystal(10) (Western Crystal Pylon - Ungoro Crater)"}, texture = "Interface\\Icons\\INV_Scroll_07", description = "Increases the target's Armor by 200 for 1800 sec.", priority = 3, spellId = 15233 },
+        { id = 8956, name = "Oil of Immolation", mats = {"Firebloom, Goldthorn, Crystal Vial"}, texture = "", description = "Does 50 fire damage to any enemies within a 5 yard radius around the caster every 3 seconds for 15 sec", priority = 3, spellId = 11350 },
     }
 }
 
