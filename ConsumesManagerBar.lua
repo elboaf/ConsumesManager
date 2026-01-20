@@ -3,7 +3,7 @@
 
 ConsumesManagerBar = {}
 
--- Configuration
+-- Configuration with scaling support
 local BAR_HEIGHT = 40
 local ICON_SIZE = 32
 local ICON_SPACING = 5
@@ -22,6 +22,7 @@ ConsumesManagerBar_Settings2 = {}
 
 -- Buff tracking
 local buffedItems = {} -- Track which items are currently buffed (now stores count: 1 for regular buffs, 1-2 for weapon enchants)
+local buffTimes = {} -- Track remaining time for buffs in seconds
 
 -- Texture cache for dynamic texture loading
 local itemTextureCache = {}
@@ -54,6 +55,31 @@ function ConsumesManagerBar_GetItemBuffData(itemID)
     return { priority = 99, spellId = nil, weaponEnchantName = nil }
 end
 
+function ConsumesManagerBar_GetBuffDuration(itemID)
+    local buffData = ConsumesManagerBar_GetItemBuffData(itemID)
+    if not buffData or not buffData.spellId or buffData.spellId == 0 then
+        return nil, nil
+    end
+    
+    -- Loop through player buffs
+    for i = 1, 32 do
+        local texture, index, spellId = UnitBuff("player", i)
+        if not texture then break end
+        
+        -- Match by spell ID (3rd parameter from superwow.dll)
+        if spellId and spellId == buffData.spellId then
+            -- Try to get the remaining time using GetPlayerBuff
+            local buffIndex = GetPlayerBuff(i - 1, "HELPFUL")
+            if buffIndex >= 0 then
+                local timeLeft = GetPlayerBuffTimeLeft(buffIndex)
+                return timeLeft, buffIndex
+            end
+        end
+    end
+    
+    return nil, nil
+end
+
 function ConsumesManagerBar_HasBuff(itemID)
     local buffData = ConsumesManagerBar_GetItemBuffData(itemID)
     if not buffData or not buffData.spellId or buffData.spellId == 0 then
@@ -77,26 +103,52 @@ end
 function ConsumesManagerBar_HasWeaponEnchant(itemID)
     local buffData = ConsumesManagerBar_GetItemBuffData(itemID)
     if not buffData or not buffData.weaponEnchantName then
-        return false, 0
+        return false, 0, nil
     end
     
-    -- Get weapon enchants (returns mainhand, offhand names)
+    -- Get weapon enchant names
     local mhName, ohName = GetWeaponEnchantInfo("player")
     local count = 0
+    local timeLeft = nil
     
+    -- Get expiration times
+    local hasMHEnchant, mhExpiration, mhCharges, hasOHEnchant, ohExpiration, ohCharges = GetWeaponEnchantInfo()
+    
+    -- Check main hand
     if mhName and mhName == buffData.weaponEnchantName then
         count = count + 1
-    end
-    if ohName and ohName == buffData.weaponEnchantName then
-        count = count + 1
+        if mhExpiration and mhExpiration > 0 then
+            local mhTimeLeftSec = mhExpiration / 1000  -- Convert ms to seconds
+            if not timeLeft or mhTimeLeftSec < timeLeft then
+                timeLeft = mhTimeLeftSec
+            end
+        else
+            -- No expiration time (infinite duration like some poisons)
+            timeLeft = -1
+        end
     end
     
-    return count > 0, count
+    -- Check off hand
+    if ohName and ohName == buffData.weaponEnchantName then
+        count = count + 1
+        if ohExpiration and ohExpiration > 0 then
+            local ohTimeLeftSec = ohExpiration / 1000  -- Convert ms to seconds
+            if not timeLeft or ohTimeLeftSec < timeLeft then
+                timeLeft = ohTimeLeftSec
+            end
+        else
+            -- No expiration time (infinite duration like some poisons)
+            timeLeft = -1
+        end
+    end
+    
+    return count > 0, count, timeLeft
 end
 
 function ConsumesManagerBar_UpdateBuffedItems()
     -- Clear previous buff tracking
     buffedItems = {}
+    buffTimes = {}
     
     -- Check each tracked item to see if it's currently buffed
     if ConsumesManager_SelectedItems then
@@ -104,25 +156,159 @@ function ConsumesManagerBar_UpdateBuffedItems()
             if isTracked then
                 local buffCount = 0
                 local hasBuff = false
+                local timeLeft = nil
                 
                 -- Check for regular buffs
                 if ConsumesManagerBar_HasBuff(itemID) then
                     buffCount = 1  -- Regular buffs count as 1
                     hasBuff = true
+                    timeLeft = ConsumesManagerBar_GetBuffDuration(itemID)
                 end
                 
                 -- Check for weapon enchants (could be 1 or 2)
-                local hasEnchant, enchantCount = ConsumesManagerBar_HasWeaponEnchant(itemID)
+                local hasEnchant, enchantCount, enchantTimeLeft = ConsumesManagerBar_HasWeaponEnchant(itemID)
                 if hasEnchant then
                     buffCount = enchantCount  -- 1 or 2 for weapon enchants
                     hasBuff = true
+                    timeLeft = enchantTimeLeft or -1
                 end
                 
                 if hasBuff then
                     buffedItems[itemID] = buffCount
+                    buffTimes[itemID] = timeLeft
                 end
             end
         end
+    end
+end
+
+function ConsumesManagerBar_ApplyScaling()
+    -- Calculate scaled dimensions based on user settings
+    local scale = ConsumesManagerBar_Settings2.scale or 1.0
+    local scaledBarHeight = BAR_HEIGHT * scale
+    local scaledIconSize = ICON_SIZE * scale
+    local scaledIconSpacing = ICON_SPACING * scale
+    
+    -- Apply scaling to main bar
+    if barFrame then
+        barFrame:SetHeight(scaledBarHeight)
+        
+        -- Update icon positions and sizes
+        for i, iconFrame in ipairs(barFrame.icons) do
+            if iconFrame then
+                iconFrame:SetWidth(scaledIconSize)
+                iconFrame:SetHeight(scaledIconSize)
+                
+                -- Update icon position
+                iconFrame:SetPoint("LEFT", barFrame, "LEFT", (i-1) * (scaledIconSize + scaledIconSpacing) + scaledIconSpacing, 0)
+                
+                -- Update buff highlight size
+                if iconFrame.buffHighlight then
+                    iconFrame.buffHighlight:SetWidth(scaledIconSize + 17 * scale)
+                    iconFrame.buffHighlight:SetHeight(scaledIconSize + 17 * scale)
+                end
+                
+                -- Update move indicator size
+                if iconFrame.moveIndicator then
+                    iconFrame.moveIndicator:SetWidth(12 * scale)
+                    iconFrame.moveIndicator:SetHeight(12 * scale)
+                end
+                
+                -- Update font sizes
+                if iconFrame.count then
+                    local fontSize = 12 * scale
+                    if fontSize < 8 then fontSize = 8 end
+                    if fontSize > 20 then fontSize = 20 end
+                    iconFrame.count:SetFont("Fonts\\FRIZQT__.TTF", fontSize)
+                end
+                
+                if iconFrame.timeText then
+                    local fontSize = 10 * scale
+                    if fontSize < 8 then fontSize = 8 end
+                    if fontSize > 18 then fontSize = 18 end
+                    iconFrame.timeText:SetFont("Fonts\\FRIZQT__.TTF", fontSize)
+                end
+            end
+        end
+        
+        -- Update bar width
+        if barFrame.icons and table.getn(barFrame.icons) > 0 then
+            local iconCount = table.getn(barFrame.icons)
+            local newWidth = (iconCount * (scaledIconSize + scaledIconSpacing)) + scaledIconSpacing
+            barFrame:SetWidth(newWidth)
+        end
+    end
+    
+    -- Apply scaling to secondary bar
+    if disabledBarFrame then
+        disabledBarFrame:SetHeight(scaledBarHeight)
+        
+        -- Update icon positions and sizes
+        for i, iconFrame in ipairs(disabledBarFrame.icons) do
+            if iconFrame then
+                iconFrame:SetWidth(scaledIconSize)
+                iconFrame:SetHeight(scaledIconSize)
+                
+                -- Update icon position
+                iconFrame:SetPoint("LEFT", disabledBarFrame, "LEFT", (i-1) * (scaledIconSize + scaledIconSpacing) + scaledIconSpacing, 0)
+                
+                -- Update buff highlight size
+                if iconFrame.buffHighlight then
+                    iconFrame.buffHighlight:SetWidth(scaledIconSize + 17 * scale)
+                    iconFrame.buffHighlight:SetHeight(scaledIconSize + 17 * scale)
+                end
+                
+                -- Update move indicator size
+                if iconFrame.moveIndicator then
+                    iconFrame.moveIndicator:SetWidth(12 * scale)
+                    iconFrame.moveIndicator:SetHeight(12 * scale)
+                end
+                
+                -- Update font sizes
+                if iconFrame.count then
+                    local fontSize = 12 * scale
+                    if fontSize < 8 then fontSize = 8 end
+                    if fontSize > 20 then fontSize = 20 end
+                    iconFrame.count:SetFont("Fonts\\FRIZQT__.TTF", fontSize)
+                end
+                
+                if iconFrame.timeText then
+                    local fontSize = 10 * scale
+                    if fontSize < 8 then fontSize = 8 end
+                    if fontSize > 18 then fontSize = 18 end
+                    iconFrame.timeText:SetFont("Fonts\\FRIZQT__.TTF", fontSize)
+                end
+            end
+        end
+        
+        -- Update bar width
+        if disabledBarFrame.icons and table.getn(disabledBarFrame.icons) > 0 then
+            local iconCount = table.getn(disabledBarFrame.icons)
+            local newWidth = (iconCount * (scaledIconSize + scaledIconSpacing)) + scaledIconSpacing
+            disabledBarFrame:SetWidth(newWidth)
+        end
+    end
+    
+    -- Update title font sizes
+    if barFrame and barFrame.title then
+        local fontSize = 12 * scale
+        if fontSize < 10 then fontSize = 10 end
+        if fontSize > 16 then fontSize = 16 end
+        barFrame.title:SetFont("Fonts\\FRIZQT__.TTF", fontSize)
+    end
+    
+    if barFrame and barFrame.editText then
+        local fontSize = 10 * scale
+        if fontSize < 8 then fontSize = 8 end
+        if fontSize > 14 then fontSize = 14 end
+        barFrame.editText:SetFont("Fonts\\FRIZQT__.TTF", fontSize)
+    end
+    
+    if disabledBarFrame and disabledBarFrame.title then
+        local fontSize = 12 * scale
+        if fontSize < 10 then fontSize = 10 end
+        if fontSize > 16 then fontSize = 16 end
+        disabledBarFrame.title:SetFont("Fonts\\FRIZQT__.TTF", fontSize)
     end
 end
 
@@ -130,6 +316,11 @@ function ConsumesManagerBar_Initialize()
     -- Create the main bar frame (for enabled items)
     barFrame = CreateFrame("Frame", "ConsumesManagerBarFrame", UIParent)
     barFrame:SetHeight(BAR_HEIGHT)
+    
+    -- Load saved scale or use default
+    if ConsumesManagerBar_Settings2.scale == nil then
+        ConsumesManagerBar_Settings2.scale = 1.0
+    end
     
     -- Load saved position or use default (UPDATED VARIABLE NAME)
     if ConsumesManagerBar_Settings2.barPosition then
@@ -317,6 +508,9 @@ function ConsumesManagerBar_Initialize()
         iconVisibility = ConsumesManagerBar_Settings2.iconVisibility
     end
     
+    -- Apply scaling
+    ConsumesManagerBar_ApplyScaling()
+    
     DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar loaded! Two bars created - both fully functional.")
 end
 
@@ -385,7 +579,8 @@ function ConsumesManagerBar_UpdateBars()
                     name = consumablesList[itemID] or "Unknown Item",
                     texture = ConsumesManagerBar_GetItemTexture(itemID), -- DYNAMIC TEXTURE LOADING
                     hidden = iconVisibility[itemID], -- true if hidden from main bar
-                    buffed = buffedItems[itemID] -- now stores count (1 for regular buffs, 1-2 for weapon enchants)
+                    buffed = buffedItems[itemID], -- now stores count (1 for regular buffs, 1-2 for weapon enchants)
+                    timeLeft = buffTimes[itemID] -- remaining time in seconds or nil
                 }
             end
         end
@@ -444,6 +639,69 @@ function ConsumesManagerBar_UpdateBars()
         barFrame:SetBackdropBorderColor(0.5, 0.5, 0.5, 0.8) -- Normal border
         disabledBarFrame:SetBackdropBorderColor(0.5, 0.5, 0.5, 0.8) -- Normal border for secondary bar
     end
+    
+    -- Apply scaling after updating bars
+    ConsumesManagerBar_ApplyScaling()
+end
+
+function ConsumesManagerBar_FormatTime(seconds)
+    if not seconds or seconds < 0 then
+        return ""
+    end
+    
+    if seconds > 3600 then
+        -- More than 1 hour: show as Xh Ym
+        local hours = math.floor(seconds / 3600)
+        local minutes = math.floor((seconds - (hours * 3600)) / 60)
+        return hours .. "h " .. minutes .. "m"
+    elseif seconds > 60 then
+        -- More than 1 minute: show as Xm (no seconds)
+        local minutes = math.floor(seconds / 60)
+        return minutes .. "m"
+    else
+        -- Less than 1 minute: show as "<1m" instead of seconds
+        return "<1m"
+    end
+end
+
+function ConsumesManagerBar_GetBuffDuration(itemID)
+    local buffData = ConsumesManagerBar_GetItemBuffData(itemID)
+    if not buffData or not buffData.spellId or buffData.spellId == 0 then
+        return nil
+    end
+    
+    -- Step 1: Find the buff texture using UnitBuff (we have spellId)
+    local targetTexture = nil
+    for i = 1, 32 do
+        local texture, index, spellId = UnitBuff("player", i)
+        if not texture then break end
+        if spellId and spellId == buffData.spellId then
+            targetTexture = texture
+            break
+        end
+    end
+    
+    if not targetTexture then
+        return nil -- Buff not found via UnitBuff
+    end
+    
+    -- Step 2: Find which GetPlayerBuff slot has this texture
+    for i = 0, 31 do
+        local buffId, cancel = GetPlayerBuff(i, "HELPFUL|HARMFUL|PASSIVE")
+        if buffId >= 0 then
+            local buffTexture = GetPlayerBuffTexture(buffId)
+            if buffTexture and buffTexture == targetTexture then
+                -- Found it! Get the time left
+                local timeLeft = GetPlayerBuffTimeLeft(buffId)
+                if timeLeft and timeLeft > 0 then
+                    return timeLeft
+                end
+                return -1 -- Buff active but no time (weapon enchants)
+            end
+        end
+    end
+    
+    return nil
 end
 
 function ConsumesManagerBar_UpdateBar(frame, items, itemCount, isSecondaryBar)
@@ -455,6 +713,11 @@ function ConsumesManagerBar_UpdateBar(frame, items, itemCount, isSecondaryBar)
         end
     end
     
+    -- Get current scale
+    local scale = ConsumesManagerBar_Settings2.scale or 1.0
+    local scaledIconSize = ICON_SIZE * scale
+    local scaledIconSpacing = ICON_SPACING * scale
+    
     -- Update or create icons
     for i = 1, itemCount do
         local iconFrame = frame.icons[i]
@@ -463,8 +726,8 @@ function ConsumesManagerBar_UpdateBar(frame, items, itemCount, isSecondaryBar)
         -- Create icon frame if it doesn't exist
         if not iconFrame then
             iconFrame = CreateFrame("Button", frame:GetName().."Icon"..i, frame)
-            iconFrame:SetWidth(ICON_SIZE)
-            iconFrame:SetHeight(ICON_SIZE)
+            iconFrame:SetWidth(scaledIconSize)
+            iconFrame:SetHeight(scaledIconSize)
             
             -- Icon texture
             local icon = iconFrame:CreateTexture(nil, "BACKGROUND")
@@ -473,23 +736,30 @@ function ConsumesManagerBar_UpdateBar(frame, items, itemCount, isSecondaryBar)
             
             -- Count text
             local count = iconFrame:CreateFontString(nil, "OVERLAY", "NumberFontNormalSmall")
-            count:SetPoint("BOTTOMRIGHT", iconFrame, "BOTTOMRIGHT", -2, 2)
+            count:SetPoint("BOTTOMRIGHT", iconFrame, "BOTTOMRIGHT", -2 * scale, 2 * scale)
             count:SetJustifyH("RIGHT")
             iconFrame.count = count
             
+            -- Time text (top left - NEW POSITION)
+            local timeText = iconFrame:CreateFontString(nil, "OVERLAY", "NumberFontNormalSmall")
+            timeText:SetPoint("TOPLEFT", iconFrame, "TOPLEFT", 2 * scale, -2 * scale)
+            timeText:SetJustifyH("LEFT")
+            timeText:SetTextColor(1, 1, 1) -- White color (CHANGED FROM YELLOW)
+            iconFrame.timeText = timeText
+            
             -- Move indicator (arrows for edit mode)
             local moveIndicator = iconFrame:CreateTexture(nil, "OVERLAY")
-            moveIndicator:SetWidth(12)
-            moveIndicator:SetHeight(12)
-            moveIndicator:SetPoint("TOPLEFT", iconFrame, "TOPLEFT", -3, 3)
+            moveIndicator:SetWidth(12 * scale)
+            moveIndicator:SetHeight(12 * scale)
+            moveIndicator:SetPoint("TOPLEFT", iconFrame, "TOPLEFT", -3 * scale, 3 * scale)
             moveIndicator:SetTexture("Interface\\Buttons\\UI-RadioButton")
             moveIndicator:Hide()
             iconFrame.moveIndicator = moveIndicator
 
             -- Buff highlight - gold border
             local buffHighlight = iconFrame:CreateTexture(nil, "OVERLAY")
-            buffHighlight:SetWidth(ICON_SIZE + 17)
-            buffHighlight:SetHeight(ICON_SIZE + 17)
+            buffHighlight:SetWidth(scaledIconSize + 17 * scale)
+            buffHighlight:SetHeight(scaledIconSize + 17 * scale)
             buffHighlight:SetPoint("CENTER", iconFrame, "CENTER", 0.5, 1)
             buffHighlight:SetTexture("Interface\\Buttons\\UI-ActionButton-Border")
             buffHighlight:SetBlendMode("ADD")
@@ -529,10 +799,14 @@ function ConsumesManagerBar_UpdateBar(frame, items, itemCount, isSecondaryBar)
             end)
             
             frame.icons[i] = iconFrame
+        else
+            -- Update existing icon size
+            iconFrame:SetWidth(scaledIconSize)
+            iconFrame:SetHeight(scaledIconSize)
         end
         
         -- Position the icon
-        iconFrame:SetPoint("LEFT", frame, "LEFT", (i-1) * (ICON_SIZE + ICON_SPACING) + ICON_SPACING, 0)
+        iconFrame:SetPoint("LEFT", frame, "LEFT", (i-1) * (scaledIconSize + scaledIconSpacing) + scaledIconSpacing, 0)
         
         -- Update icon content
         iconFrame.itemID = item.id
@@ -547,6 +821,37 @@ function ConsumesManagerBar_UpdateBar(frame, items, itemCount, isSecondaryBar)
             end
         else
             iconFrame.count:SetText("") -- No count text for 0 items
+        end
+        
+        -- Update time display for buffed items
+        if item.buffed and item.timeLeft then
+            if item.timeLeft == -1 then
+                -- Weapon enchant or unknown duration
+                iconFrame.timeText:SetText("Active")
+                iconFrame.timeText:SetTextColor(0, 1, 0) -- Green for active
+            elseif item.timeLeft > 0 then
+                -- Regular buff with time remaining
+                local timeStr = ConsumesManagerBar_FormatTime(item.timeLeft)
+                iconFrame.timeText:SetText(timeStr)
+                
+                -- Color code based on remaining time
+                if item.timeLeft < 30 then
+                    -- Less than 30 seconds: Red
+                    iconFrame.timeText:SetTextColor(1, 0, 0)
+                elseif item.timeLeft < 60 then
+                    -- Less than 1 minute: Yellow
+                    iconFrame.timeText:SetTextColor(1, 1, 0)
+                else
+                    -- More than 1 minute: white color
+                    iconFrame.timeText:SetTextColor(1, 1, 1)
+                end
+            else
+                -- Buff expired or no time data
+                iconFrame.timeText:SetText("")
+            end
+        else
+            -- Not buffed
+            iconFrame.timeText:SetText("")
         end
         
         -- Update appearance based on whether item is available and buffed
@@ -615,7 +920,7 @@ function ConsumesManagerBar_UpdateBar(frame, items, itemCount, isSecondaryBar)
     
     -- Adjust bar width based on number of items
     if itemCount > 0 then
-        local newWidth = (itemCount * (ICON_SIZE + ICON_SPACING)) + ICON_SPACING
+        local newWidth = (itemCount * (scaledIconSize + scaledIconSpacing)) + scaledIconSpacing
         frame:SetWidth(newWidth)
         frame:Show()
     else
@@ -684,13 +989,25 @@ function ConsumesManagerBar_ShowTooltip(iconFrame, isSecondaryBar)
             GameTooltip:AddLine("Count: 0 (Not in bags)", 1, 0.5, 0.5)
         end
         
-        -- Show buff status with count info
+        -- Show buff status with time info
         if buffedItems[iconFrame.itemID] then
             local buffCount = buffedItems[iconFrame.itemID]
+            local timeLeft = buffTimes[iconFrame.itemID]
+            
             if buffCount == 2 then
                 GameTooltip:AddLine("Currently Active (Both Weapons)", 0, 1, 0) -- Bright green
             else
                 GameTooltip:AddLine("Currently Active", 0, 1, 0) -- Green
+            end
+            
+            -- Add time information if available
+            if timeLeft and timeLeft > 0 then
+                local timeStr = ConsumesManagerBar_FormatTime(timeLeft)
+                if timeStr ~= "" then
+                    GameTooltip:AddLine("Time Left: " .. timeStr, 1, 1, 0.5) -- Yellow
+                end
+            elseif timeLeft == -1 then
+                GameTooltip:AddLine("Duration: Weapon Enchant", 0.8, 0.8, 0.8) -- Gray
             end
         end
         
@@ -731,7 +1048,24 @@ function ConsumesManagerBar_ToggleEditMode()
     ConsumesManagerBar_UpdateBars()
 end
 
--- Slash command for showing/hiding the bars
+function ConsumesManagerBar_SetScale(newScale)
+    -- Clamp scale between 0.5 and 2.0
+    newScale = tonumber(newScale)
+    if not newScale or newScale < 0.5 then
+        newScale = 0.5
+    elseif newScale > 2.0 then
+        newScale = 2.0
+    end
+    
+    -- Save scale setting
+    ConsumesManagerBar_Settings2.scale = newScale
+    
+    -- Apply scaling
+    ConsumesManagerBar_ApplyScaling()
+    
+    DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar: Scale set to " .. string.format("%.1f", newScale))
+end
+
 -- Slash command for showing/hiding the bars
 SLASH_CONSUMESBAR1 = "/cmbar"
 SLASH_CONSUMESBAR2 = "/consumesbar"
@@ -787,6 +1121,34 @@ SlashCmdList["CONSUMESBARRESET"] = function(msg)
     disabledBarFrame:SetPoint("TOP", barFrame, "BOTTOM", 0, -10)
     
     DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar: Bar positions reset to default.")
+end
+
+-- Slash command for scaling
+SLASH_CONSUMESBARSCALE1 = "/cmbarscale"
+SLASH_CONSUMESBARSCALE2 = "/consumesbarscale"
+SlashCmdList["CONSUMESBARSCALE"] = function(msg)
+    if not barFrame then
+        ConsumesManagerBar_Initialize()
+        DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar initialized. Use /cmbarscale 0.5-2.0 to adjust size.")
+        return
+    end
+    
+    if msg and msg ~= "" then
+        -- Parse scale value from command
+        local newScale = tonumber(msg)
+        if newScale then
+            ConsumesManagerBar_SetScale(newScale)
+        else
+            DEFAULT_CHAT_FRAME:AddMessage("Usage: /cmbarscale <value>")
+            DEFAULT_CHAT_FRAME:AddMessage("Current scale: " .. string.format("%.1f", ConsumesManagerBar_Settings2.scale or 1.0))
+            DEFAULT_CHAT_FRAME:AddMessage("Valid range: 0.5 - 2.0 (0.5 = 50%, 1.0 = 100%, 2.0 = 200%)")
+        end
+    else
+        -- Show current scale if no value provided
+        DEFAULT_CHAT_FRAME:AddMessage("Current scale: " .. string.format("%.1f", ConsumesManagerBar_Settings2.scale or 1.0))
+        DEFAULT_CHAT_FRAME:AddMessage("Usage: /cmbarscale <value>")
+        DEFAULT_CHAT_FRAME:AddMessage("Valid range: 0.5 - 2.0 (0.5 = 50%, 1.0 = 100%, 2.0 = 200%)")
+    end
 end
 
 local initFrame = CreateFrame("Frame")
