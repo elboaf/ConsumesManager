@@ -464,32 +464,32 @@ function ConsumesManager_CreateMainWindow()
    
 
     -- Manager Tab
-    local tab1 = CreateTab("ConsumesManager_MainFrameTab1", "Interface\\AddOns\\ConsumesManager\\images\\minimap_icon", 30, "Tracker", 1)
+    local tab1 = CreateTab("ConsumesManager_MainFrameTab1", "Interface\\Icons\\Ability_spy", 30, "Tracker", 1)
     tab1.originalOnClick = function()
         ConsumesManager_ShowTab(1)
     end
     tab1:SetScript("OnClick", tab1.originalOnClick)
 
     -- Items Tab
-    local tab2 = CreateTab("ConsumesManager_MainFrameTab2", "Interface\\Icons\\Inv_misc_book_03", 80, "Items", 2)
+    local tab2 = CreateTab("ConsumesManager_MainFrameTab2", "Interface\\Icons\\Inv_misc_punchcards_white", 80, "Items", 2)
     tab2.originalOnClick = function()
         ConsumesManager_ShowTab(2)
     end
     tab2:SetScript("OnClick", tab2.originalOnClick)
 
     -- Presets Tab
-    local tab3 = CreateTab("ConsumesManager_MainFrameTab3", "Interface\\Icons\\inv_misc_note_06", 130, "Presets", 3)
+    local tab3 = CreateTab("ConsumesManager_MainFrameTab3", "Interface\\Icons\\Inv_scroll_03", 130, "Presets", 3)
     tab3.originalOnClick = function()
         ConsumesManager_ShowTab(3)
     end
     tab3:SetScript("OnClick", tab3.originalOnClick)
 
     -- Settings Tab
-    local tab4 = CreateTab("ConsumesManager_MainFrameTab4", "Interface\\Icons\\INV_Misc_Gear_01", 180, "Settings", 4)
-    tab4.originalOnClick = function()
-        ConsumesManager_ShowTab(4)
-    end
-    tab4:SetScript("OnClick", tab4.originalOnClick)
+    --local tab4 = CreateTab("ConsumesManager_MainFrameTab4", "Interface\\Icons\\INV_Misc_Gear_01", 180, "Settings", 4)
+   -- tab4.originalOnClick = function()
+    --    ConsumesManager_ShowTab(4)
+    --end
+    --tab4:SetScript("OnClick", tab4.originalOnClick)
 
 
     -- Send Data Button
