@@ -214,19 +214,19 @@ function ConsumesManagerBar_ApplyScaling()
                     iconFrame.moveIndicator:SetHeight(12 * scale)
                 end
                 
-                -- Update font sizes
+                -- Update font sizes WITH THICKOUTLINE
                 if iconFrame.count then
                     local fontSize = 12 * scale
                     if fontSize < 8 then fontSize = 8 end
                     if fontSize > 20 then fontSize = 20 end
-                    iconFrame.count:SetFont("Fonts\\FRIZQT__.TTF", fontSize)
+                    iconFrame.count:SetFont("Fonts\\FRIZQT__.TTF", fontSize, "THICKOUTLINE")
                 end
                 
                 if iconFrame.timeText then
                     local fontSize = 10 * scale
                     if fontSize < 8 then fontSize = 8 end
                     if fontSize > 18 then fontSize = 18 end
-                    iconFrame.timeText:SetFont("Fonts\\FRIZQT__.TTF", fontSize)
+                    iconFrame.timeText:SetFont("Fonts\\FRIZQT__.TTF", fontSize, "THICKOUTLINE")
                 end
             end
         end
@@ -264,19 +264,19 @@ function ConsumesManagerBar_ApplyScaling()
                     iconFrame.moveIndicator:SetHeight(12 * scale)
                 end
                 
-                -- Update font sizes
+                -- Update font sizes WITH THICKOUTLINE
                 if iconFrame.count then
                     local fontSize = 12 * scale
                     if fontSize < 8 then fontSize = 8 end
                     if fontSize > 20 then fontSize = 20 end
-                    iconFrame.count:SetFont("Fonts\\FRIZQT__.TTF", fontSize)
+                    iconFrame.count:SetFont("Fonts\\FRIZQT__.TTF", fontSize, "THICKOUTLINE")
                 end
                 
                 if iconFrame.timeText then
                     local fontSize = 10 * scale
                     if fontSize < 8 then fontSize = 8 end
                     if fontSize > 18 then fontSize = 18 end
-                    iconFrame.timeText:SetFont("Fonts\\FRIZQT__.TTF", fontSize)
+                    iconFrame.timeText:SetFont("Fonts\\FRIZQT__.TTF", fontSize, "THICKOUTLINE")
                 end
             end
         end
@@ -289,26 +289,26 @@ function ConsumesManagerBar_ApplyScaling()
         end
     end
     
-    -- Update title font sizes
+    -- Update title font sizes WITH THICKOUTLINE
     if barFrame and barFrame.title then
         local fontSize = 12 * scale
         if fontSize < 10 then fontSize = 10 end
         if fontSize > 16 then fontSize = 16 end
-        barFrame.title:SetFont("Fonts\\FRIZQT__.TTF", fontSize)
+        barFrame.title:SetFont("Fonts\\FRIZQT__.TTF", fontSize, "THICKOUTLINE")
     end
     
     if barFrame and barFrame.editText then
         local fontSize = 10 * scale
         if fontSize < 8 then fontSize = 8 end
         if fontSize > 14 then fontSize = 14 end
-        barFrame.editText:SetFont("Fonts\\FRIZQT__.TTF", fontSize)
+        barFrame.editText:SetFont("Fonts\\FRIZQT__.TTF", fontSize, "THICKOUTLINE")
     end
     
     if disabledBarFrame and disabledBarFrame.title then
         local fontSize = 12 * scale
         if fontSize < 10 then fontSize = 10 end
         if fontSize > 16 then fontSize = 16 end
-        disabledBarFrame.title:SetFont("Fonts\\FRIZQT__.TTF", fontSize)
+        disabledBarFrame.title:SetFont("Fonts\\FRIZQT__.TTF", fontSize, "THICKOUTLINE")
     end
 end
 
