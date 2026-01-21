@@ -842,7 +842,7 @@ function ConsumesManagerBar_UpdateBar(frame, items, itemCount, isSecondaryBar)
             local timeText = iconFrame:CreateFontString(nil, "OVERLAY", "NumberFontNormalSmall")
             timeText:SetPoint("TOPLEFT", iconFrame, "TOPLEFT", 2 * scale, -2 * scale)
             timeText:SetJustifyH("LEFT")
-            timeText:SetTextColor(1, 1, 1) -- White color (CHANGED FROM YELLOW)
+            timeText:SetTextColor(0, 1, 0) -- White color (CHANGED FROM YELLOW)
             timeText:SetAlpha(1.0) -- Start with full opacity
             iconFrame.timeText = timeText
             
@@ -971,9 +971,9 @@ function ConsumesManagerBar_UpdateBar(frame, items, itemCount, isSecondaryBar)
                     if iconFrame.buffHighlight then
                         iconFrame.buffHighlight:SetVertexColor(1, 0.3, 0.3, 1) -- Reddish glow
                     end
-                elseif item.timeLeft < 60 then
+                elseif item.timeLeft < 120 then
                     -- Less than 1 minute: Yellow with pulsing
-                    iconFrame.timeText:SetTextColor(1, 1, 0)
+                    iconFrame.timeText:SetTextColor(1, 0, 0)
                     -- Count text also yellow
                     if iconFrame.count:GetText() ~= "" then
                         iconFrame.count:SetTextColor(1, 1, 0) -- Yellow
@@ -997,7 +997,7 @@ function ConsumesManagerBar_UpdateBar(frame, items, itemCount, isSecondaryBar)
                     end
                 else
                     -- More than 1 minute: white time text, no pulsing
-                    iconFrame.timeText:SetTextColor(1, 1, 1)
+                    iconFrame.timeText:SetTextColor(1, 1, 0)
                     iconFrame.timeText:SetAlpha(1.0) -- Full opacity
                     -- Count text green for buffs over 60 seconds
                     if iconFrame.count:GetText() ~= "" then
@@ -1008,7 +1008,7 @@ function ConsumesManagerBar_UpdateBar(frame, items, itemCount, isSecondaryBar)
                     pulsingTimers[item.id] = nil
                     -- Ensure buff highlight has normal gold color and full alpha
                     if iconFrame.buffHighlight then
-                        iconFrame.buffHighlight:SetVertexColor(1, 0.82, 0, 1) -- Gold
+                        iconFrame.buffHighlight:SetVertexColor(1, 1, 1, 1) -- white
                         iconFrame.buffHighlight:SetAlpha(1.0)
                     end
                 end
