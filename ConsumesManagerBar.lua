@@ -27,6 +27,10 @@ local buffTimes = {} -- Track remaining time for buffs in seconds
 -- Texture cache for dynamic texture loading
 local itemTextureCache = {}
 
+-- Animation tracking for pulsing timers
+local pulsingTimers = {} -- Track which icons should pulse: pulsingTimers[itemID] = {frame = iconFrame, lastUpdate = 0, direction = 1}
+local lastPulseUpdate = 0
+
 -- REMOVED: buffNameMap - now using Itemlist.lua directly
 
 function ConsumesManagerBar_GetItemTexture(itemID)
@@ -312,6 +316,72 @@ function ConsumesManagerBar_ApplyScaling()
     end
 end
 
+function ConsumesManagerBar_UpdatePulseAnimation()
+    -- Calculate elapsed time since last update
+    local currentTime = GetTime()
+    local elapsed = currentTime - lastPulseUpdate
+    lastPulseUpdate = currentTime
+    
+    -- Limit elapsed to prevent large jumps
+    if elapsed > 0.2 then
+        elapsed = 0.05
+    end
+    
+    -- Update all pulsing timers
+    for itemID, pulseData in pairs(pulsingTimers) do
+        if pulseData.frame and pulseData.frame:IsShown() then
+            pulseData.lastUpdate = (pulseData.lastUpdate or 0) + elapsed
+            
+            -- Update every 0.1 seconds for smooth animation
+            if pulseData.lastUpdate >= 0.1 then
+                local alpha = pulseData.frame.timeText:GetAlpha()
+                
+                -- Pulse between 0.3 and 1.0 alpha for text
+                if pulseData.direction == 1 then
+                    alpha = alpha + 0.15
+                    if alpha >= 1.0 then
+                        alpha = 1.0
+                        pulseData.direction = -1
+                    end
+                else
+                    alpha = alpha - 0.15
+                    if alpha <= 0.3 then
+                        alpha = 0.3
+                        pulseData.direction = 1
+                    end
+                end
+                
+                -- Apply same alpha to time text
+                pulseData.frame.timeText:SetAlpha(alpha)
+                
+                -- Also apply same alpha to count text if it exists and has text
+                if pulseData.frame.count and pulseData.frame.count:GetText() ~= "" then
+                    pulseData.frame.count:SetAlpha(alpha)
+                end
+                
+                -- Also pulse the buff highlight glow effect if it exists
+                if pulseData.frame.buffHighlight and pulseData.frame.buffHighlight:IsShown() then
+                    -- For glow effect, pulse between 0.5 and 1.0 alpha (more subtle)
+                    local glowAlpha
+                    if pulseData.timeLeft < 30 then
+                        -- Under 30 seconds: faster, more intense pulse for red warning
+                        glowAlpha = 0.4 + (alpha * 0.6) -- 0.4 to 1.0 range
+                    else
+                        -- 30-60 seconds: slower, softer pulse for yellow warning
+                        glowAlpha = 0.6 + (alpha * 0.4) -- 0.6 to 1.0 range
+                    end
+                    pulseData.frame.buffHighlight:SetAlpha(glowAlpha)
+                end
+                
+                pulseData.lastUpdate = 0
+            end
+        else
+            -- Clean up if frame no longer exists
+            pulsingTimers[itemID] = nil
+        end
+    end
+end
+
 function ConsumesManagerBar_Initialize()
     -- Create the main bar frame (for enabled items)
     barFrame = CreateFrame("Frame", "ConsumesManagerBarFrame", UIParent)
@@ -468,7 +538,7 @@ function ConsumesManagerBar_Initialize()
     end)
     
     -- Hide titles after 3 seconds
-    barFrame:SetScript("OnUpdate", function(arg1)
+    barFrame:SetScript("OnUpdate", function()
         -- Hide main bar title
         if this.title and this.title:IsVisible() then
             if not this.hideTime then
@@ -498,6 +568,9 @@ function ConsumesManagerBar_Initialize()
             ConsumesManagerBar_UpdateBars()
             this.lastBarUpdate = GetTime()
         end
+        
+        -- Update pulse animations every frame
+        ConsumesManagerBar_UpdatePulseAnimation()
     end)
     
     -- Load saved visibility settings (UPDATED VARIABLE NAME)
@@ -713,6 +786,30 @@ function ConsumesManagerBar_UpdateBar(frame, items, itemCount, isSecondaryBar)
         end
     end
     
+    -- Remove any pulsing timers for items that are no longer in this bar
+    for i = 1, itemCount do
+        local item = items[i]
+        if item and item.id then
+            -- Keep pulsing timer if this item should pulse
+        else
+            -- Clean up old pulsing timers
+            for itemID, pulseData in pairs(pulsingTimers) do
+                if pulseData.frame and pulseData.frame:GetParent() == frame then
+                    local found = false
+                    for j = 1, itemCount do
+                        if items[j] and items[j].id == itemID then
+                            found = true
+                            break
+                        end
+                    end
+                    if not found then
+                        pulsingTimers[itemID] = nil
+                    end
+                end
+            end
+        end
+    end
+    
     -- Get current scale
     local scale = ConsumesManagerBar_Settings2.scale or 1.0
     local scaledIconSize = ICON_SIZE * scale
@@ -738,6 +835,7 @@ function ConsumesManagerBar_UpdateBar(frame, items, itemCount, isSecondaryBar)
             local count = iconFrame:CreateFontString(nil, "OVERLAY", "NumberFontNormalSmall")
             count:SetPoint("BOTTOMRIGHT", iconFrame, "BOTTOMRIGHT", -2 * scale, 2 * scale)
             count:SetJustifyH("RIGHT")
+            count:SetAlpha(1.0) -- Start with full opacity
             iconFrame.count = count
             
             -- Time text (top left - NEW POSITION)
@@ -745,6 +843,7 @@ function ConsumesManagerBar_UpdateBar(frame, items, itemCount, isSecondaryBar)
             timeText:SetPoint("TOPLEFT", iconFrame, "TOPLEFT", 2 * scale, -2 * scale)
             timeText:SetJustifyH("LEFT")
             timeText:SetTextColor(1, 1, 1) -- White color (CHANGED FROM YELLOW)
+            timeText:SetAlpha(1.0) -- Start with full opacity
             iconFrame.timeText = timeText
             
             -- Move indicator (arrows for edit mode)
@@ -829,6 +928,19 @@ function ConsumesManagerBar_UpdateBar(frame, items, itemCount, isSecondaryBar)
                 -- Weapon enchant or unknown duration
                 iconFrame.timeText:SetText("Active")
                 iconFrame.timeText:SetTextColor(0, 1, 0) -- Green for active
+                iconFrame.timeText:SetAlpha(1.0) -- Full opacity
+                -- Count text stays green for active buffs over 60 seconds
+                if iconFrame.count:GetText() ~= "" then
+                    iconFrame.count:SetTextColor(0, 1, 0) -- Green
+                    iconFrame.count:SetAlpha(1.0) -- Full opacity
+                end
+                -- Remove from pulsing timers if it was there
+                pulsingTimers[item.id] = nil
+                -- Ensure buff highlight has normal gold color and full alpha
+                if iconFrame.buffHighlight then
+                    iconFrame.buffHighlight:SetVertexColor(1, 0.82, 0, 1) -- Gold
+                    iconFrame.buffHighlight:SetAlpha(1.0)
+                end
             elseif item.timeLeft > 0 then
                 -- Regular buff with time remaining
                 local timeStr = ConsumesManagerBar_FormatTime(item.timeLeft)
@@ -836,29 +948,104 @@ function ConsumesManagerBar_UpdateBar(frame, items, itemCount, isSecondaryBar)
                 
                 -- Color code based on remaining time
                 if item.timeLeft < 30 then
-                    -- Less than 30 seconds: Red
+                    -- Less than 30 seconds: Red with pulsing
                     iconFrame.timeText:SetTextColor(1, 0, 0)
+                    -- Count text also red
+                    if iconFrame.count:GetText() ~= "" then
+                        iconFrame.count:SetTextColor(1, 0, 0) -- Red
+                    end
+                    -- Add to pulsing timers with timeLeft info
+                    if not pulsingTimers[item.id] then
+                        pulsingTimers[item.id] = {
+                            frame = iconFrame,
+                            lastUpdate = 0,
+                            direction = 1,
+                            timeLeft = item.timeLeft
+                        }
+                    else
+                        -- Update frame reference and timeLeft
+                        pulsingTimers[item.id].frame = iconFrame
+                        pulsingTimers[item.id].timeLeft = item.timeLeft
+                    end
+                    -- Update buff highlight color to match timer (red)
+                    if iconFrame.buffHighlight then
+                        iconFrame.buffHighlight:SetVertexColor(1, 0.3, 0.3, 1) -- Reddish glow
+                    end
                 elseif item.timeLeft < 60 then
-                    -- Less than 1 minute: Yellow
+                    -- Less than 1 minute: Yellow with pulsing
                     iconFrame.timeText:SetTextColor(1, 1, 0)
+                    -- Count text also yellow
+                    if iconFrame.count:GetText() ~= "" then
+                        iconFrame.count:SetTextColor(1, 1, 0) -- Yellow
+                    end
+                    -- Add to pulsing timers with timeLeft info
+                    if not pulsingTimers[item.id] then
+                        pulsingTimers[item.id] = {
+                            frame = iconFrame,
+                            lastUpdate = 0,
+                            direction = 1,
+                            timeLeft = item.timeLeft
+                        }
+                    else
+                        -- Update frame reference and timeLeft
+                        pulsingTimers[item.id].frame = iconFrame
+                        pulsingTimers[item.id].timeLeft = item.timeLeft
+                    end
+                    -- Update buff highlight color to match timer (yellow/gold)
+                    if iconFrame.buffHighlight then
+                        iconFrame.buffHighlight:SetVertexColor(1, 0.82, 0, 1) -- Gold glow
+                    end
                 else
-                    -- More than 1 minute: white color
+                    -- More than 1 minute: white time text, no pulsing
                     iconFrame.timeText:SetTextColor(1, 1, 1)
+                    iconFrame.timeText:SetAlpha(1.0) -- Full opacity
+                    -- Count text green for buffs over 60 seconds
+                    if iconFrame.count:GetText() ~= "" then
+                        iconFrame.count:SetTextColor(0, 1, 0) -- Green
+                        iconFrame.count:SetAlpha(1.0) -- Full opacity
+                    end
+                    -- Remove from pulsing timers
+                    pulsingTimers[item.id] = nil
+                    -- Ensure buff highlight has normal gold color and full alpha
+                    if iconFrame.buffHighlight then
+                        iconFrame.buffHighlight:SetVertexColor(1, 0.82, 0, 1) -- Gold
+                        iconFrame.buffHighlight:SetAlpha(1.0)
+                    end
                 end
             else
                 -- Buff expired or no time data
                 iconFrame.timeText:SetText("")
+                iconFrame.timeText:SetAlpha(1.0) -- Full opacity
+                -- Count text white (no buff)
+                if iconFrame.count:GetText() ~= "" then
+                    iconFrame.count:SetTextColor(1, 1, 1) -- White
+                    iconFrame.count:SetAlpha(1.0) -- Full opacity
+                end
+                -- Remove from pulsing timers
+                pulsingTimers[item.id] = nil
+                -- Ensure buff highlight has normal gold color and full alpha
+                if iconFrame.buffHighlight then
+                    iconFrame.buffHighlight:SetVertexColor(1, 0.82, 0, 1) -- Gold
+                    iconFrame.buffHighlight:SetAlpha(1.0)
+                end
             end
         else
             -- Not buffed
             iconFrame.timeText:SetText("")
+            iconFrame.timeText:SetAlpha(1.0) -- Full opacity
+            -- Count text white (no buff)
+            if iconFrame.count:GetText() ~= "" then
+                iconFrame.count:SetTextColor(1, 1, 1) -- White
+                iconFrame.count:SetAlpha(1.0) -- Full opacity
+            end
+            -- Remove from pulsing timers
+            pulsingTimers[item.id] = nil
         end
         
         -- Update appearance based on whether item is available and buffed
         if item.buffed then
             -- Item is currently buffed - highlight with glowing border
             iconFrame.icon:SetDesaturated(false)
-            iconFrame.count:SetTextColor(0, 1, 0) -- Green count for buffed items
             
             -- Check if it's a weapon enchant with both weapons
             local buffData = ConsumesManagerBar_GetItemBuffData(item.id)
@@ -872,30 +1059,33 @@ function ConsumesManagerBar_UpdateBar(frame, items, itemCount, isSecondaryBar)
                         iconFrame.buffHighlight:Show()
                     end
                 else
-                    -- One weapon enchanted or regular buff - YELLOW/GOLD
+                    -- One weapon enchanted or regular buff - show highlight
                     if iconFrame.buffHighlight then
-                        iconFrame.buffHighlight:SetVertexColor(1, 0.82, 0, 1) -- Gold
+                        -- Color already set above based on timer
                         iconFrame.buffHighlight:Show()
                     end
                 end
             else
-                -- Regular buff - YELLOW/GOLD
+                -- Regular buff - show highlight with appropriate color
                 if iconFrame.buffHighlight then
-                    iconFrame.buffHighlight:SetVertexColor(1, 0.82, 0, 1) -- Gold
+                    -- Color already set above based on timer
                     iconFrame.buffHighlight:Show()
                 end
             end
         elseif item.count > 0 then
             -- Item is available but not buffed - normal appearance
             iconFrame.icon:SetDesaturated(false)
-            iconFrame.count:SetTextColor(1, 1, 1)
             if iconFrame.buffHighlight then
                 iconFrame.buffHighlight:Hide()
             end
         else
             -- Item is not available - greyed out
             iconFrame.icon:SetDesaturated(true)
-            iconFrame.count:SetTextColor(0.5, 0.5, 0.5)
+            -- Count text grey when no items available
+            if iconFrame.count:GetText() ~= "" then
+                iconFrame.count:SetTextColor(0.5, 0.5, 0.5) -- Grey
+                iconFrame.count:SetAlpha(1.0) -- Full opacity
+            end
             if iconFrame.buffHighlight then
                 iconFrame.buffHighlight:Hide()
             end
