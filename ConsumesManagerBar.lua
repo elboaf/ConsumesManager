@@ -31,7 +31,10 @@ local itemTextureCache = {}
 local pulsingTimers = {} -- Track which icons should pulse: pulsingTimers[itemID] = {frame = iconFrame, lastUpdate = 0, direction = 1}
 local lastPulseUpdate = 0
 
--- REMOVED: buffNameMap - now using Itemlist.lua directly
+-- Custom priority tracking
+local customPriorities = {} -- itemID -> custom priority value (lower = higher priority)
+local draggingItem = nil -- Item being dragged for reordering
+local dragStartIndex = 0
 
 function ConsumesManagerBar_GetItemTexture(itemID)
     -- If texture is actually the 9th return (equipLoc position)
@@ -57,6 +60,52 @@ function ConsumesManagerBar_GetItemBuffData(itemID)
         end
     end
     return { priority = 99, spellId = nil, weaponEnchantName = nil }
+end
+
+function ConsumesManagerBar_GetEffectivePriority(itemID)
+    -- Return custom priority if set, otherwise default priority
+    if customPriorities[itemID] then
+        return customPriorities[itemID]
+    end
+    
+    local buffData = ConsumesManagerBar_GetItemBuffData(itemID)
+    return buffData.priority or 99
+end
+
+function ConsumesManagerBar_SaveCustomPriorities()
+    -- Save custom priorities to settings
+    ConsumesManagerBar_Settings2.customPriorities = customPriorities
+end
+
+function ConsumesManagerBar_LoadCustomPriorities()
+    -- Load custom priorities from settings
+    if ConsumesManagerBar_Settings2.customPriorities then
+        customPriorities = ConsumesManagerBar_Settings2.customPriorities
+    else
+        customPriorities = {}
+    end
+end
+
+function ConsumesManagerBar_SetCustomPriority(itemID, priority)
+    -- Set custom priority for an item
+    customPriorities[itemID] = priority
+    ConsumesManagerBar_SaveCustomPriorities()
+    ConsumesManagerBar_UpdateBars()
+end
+
+function ConsumesManagerBar_ResetCustomPriority(itemID)
+    -- Reset to default priority
+    customPriorities[itemID] = nil
+    ConsumesManagerBar_SaveCustomPriorities()
+    ConsumesManagerBar_UpdateBars()
+end
+
+function ConsumesManagerBar_ResetAllCustomPriorities()
+    -- Reset all custom priorities
+    customPriorities = {}
+    ConsumesManagerBar_SaveCustomPriorities()
+    ConsumesManagerBar_UpdateBars()
+    DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar: All custom priorities reset to defaults.")
 end
 
 function ConsumesManagerBar_GetBuffDuration(itemID)
@@ -218,6 +267,17 @@ function ConsumesManagerBar_ApplyScaling()
                     iconFrame.moveIndicator:SetHeight(12 * scale)
                 end
                 
+                -- Update arrow button sizes
+                if iconFrame.leftArrow then
+                    iconFrame.leftArrow:SetWidth(12 * scale)
+                    iconFrame.leftArrow:SetHeight(12 * scale)
+                end
+                
+                if iconFrame.rightArrow then
+                    iconFrame.rightArrow:SetWidth(12 * scale)
+                    iconFrame.rightArrow:SetHeight(12 * scale)
+                end
+                
                 -- Update font sizes WITH THICKOUTLINE
                 if iconFrame.count then
                     local fontSize = 12 * scale
@@ -266,6 +326,17 @@ function ConsumesManagerBar_ApplyScaling()
                 if iconFrame.moveIndicator then
                     iconFrame.moveIndicator:SetWidth(12 * scale)
                     iconFrame.moveIndicator:SetHeight(12 * scale)
+                end
+                
+                -- Update arrow button sizes
+                if iconFrame.leftArrow then
+                    iconFrame.leftArrow:SetWidth(12 * scale)
+                    iconFrame.leftArrow:SetHeight(12 * scale)
+                end
+                
+                if iconFrame.rightArrow then
+                    iconFrame.rightArrow:SetWidth(12 * scale)
+                    iconFrame.rightArrow:SetHeight(12 * scale)
                 end
                 
                 -- Update font sizes WITH THICKOUTLINE
@@ -442,7 +513,7 @@ function ConsumesManagerBar_Initialize()
     -- Edit mode indicator
     local editText = barFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     editText:SetPoint("BOTTOM", barFrame, "BOTTOM", 0, 5)
-    editText:SetText("EDIT MODE - Click icons to move between bars")
+    editText:SetText("EDIT MODE - Click icons to move between bars, use arrows to reorder")
     editText:SetTextColor(1, 0.5, 0.5)
     editText:Hide()
     barFrame.editText = editText
@@ -528,6 +599,9 @@ function ConsumesManagerBar_Initialize()
         disabledBarFrame:Hide()
     end
     -- ===== END VISIBILITY LOADING =====
+    
+    -- Load custom priorities
+    ConsumesManagerBar_LoadCustomPriorities()
     
     -- Hide titles after a few seconds
     barFrame:SetScript("OnShow", function()
@@ -653,24 +727,18 @@ function ConsumesManagerBar_UpdateBars()
                     texture = ConsumesManagerBar_GetItemTexture(itemID), -- DYNAMIC TEXTURE LOADING
                     hidden = iconVisibility[itemID], -- true if hidden from main bar
                     buffed = buffedItems[itemID], -- now stores count (1 for regular buffs, 1-2 for weapon enchants)
-                    timeLeft = buffTimes[itemID] -- remaining time in seconds or nil
+                    timeLeft = buffTimes[itemID], -- remaining time in seconds or nil
+                    effectivePriority = ConsumesManagerBar_GetEffectivePriority(itemID) -- Get effective priority
                 }
             end
         end
     end
     
-    -- Sort by priority then by name using table.sort for predictable ordering
+    -- Sort by effective priority then by name using table.sort for predictable ordering
     table.sort(allItems, function(a, b)
-        local buffDataA = ConsumesManagerBar_GetItemBuffData(a.id)
-        local buffDataB = ConsumesManagerBar_GetItemBuffData(b.id)
-        
-        -- Default priority to 99 if not found
-        local priorityA = buffDataA and buffDataA.priority or 99
-        local priorityB = buffDataB and buffDataB.priority or 99
-        
-        -- First sort by priority (ascending - lower numbers first)
-        if priorityA ~= priorityB then
-            return priorityA < priorityB
+        -- First sort by effective priority (ascending - lower numbers first)
+        if a.effectivePriority ~= b.effectivePriority then
+            return a.effectivePriority < b.effectivePriority
         end
         
         -- If priorities are equal, sort by name (ascending)
@@ -868,6 +936,40 @@ function ConsumesManagerBar_UpdateBar(frame, items, itemCount, isSecondaryBar)
             buffHighlight:Hide()
             iconFrame.buffHighlight = buffHighlight
             
+            -- Left arrow button for reordering
+            local leftArrow = CreateFrame("Button", frame:GetName().."LeftArrow"..i, iconFrame)
+            leftArrow:SetWidth(16 * scale)
+            leftArrow:SetHeight(16 * scale)
+            leftArrow:SetPoint("LEFT", iconFrame, "LEFT", -8 * scale, 0)
+            leftArrow:SetNormalTexture("Interface\\Buttons\\UI-ScrollBar-ScrollUpButton-Up")
+            leftArrow:SetPushedTexture("Interface\\Buttons\\UI-ScrollBar-ScrollUpButton-Down")
+            leftArrow:SetHighlightTexture("Interface\\Buttons\\UI-ScrollBar-ScrollUpButton-Highlight")
+            leftArrow.itemID = nil
+            leftArrow:SetScript("OnClick", function()
+                if this.itemID then
+                    ConsumesManagerBar_MoveItemLeft(this.itemID, isSecondaryBar)
+                end
+            end)
+            leftArrow:Hide()
+            iconFrame.leftArrow = leftArrow
+            
+            -- Right arrow button for reordering
+            local rightArrow = CreateFrame("Button", frame:GetName().."RightArrow"..i, iconFrame)
+            rightArrow:SetWidth(16 * scale)
+            rightArrow:SetHeight(16 * scale)
+            rightArrow:SetPoint("RIGHT", iconFrame, "RIGHT", 8 * scale, 0)
+            rightArrow:SetNormalTexture("Interface\\Buttons\\UI-ScrollBar-ScrollDownButton-Up")
+            rightArrow:SetPushedTexture("Interface\\Buttons\\UI-ScrollBar-ScrollDownButton-Down")
+            rightArrow:SetHighlightTexture("Interface\\Buttons\\UI-ScrollBar-ScrollDownButton-Highlight")
+            rightArrow.itemID = nil
+            rightArrow:SetScript("OnClick", function()
+                if this.itemID then
+                    ConsumesManagerBar_MoveItemRight(this.itemID, isSecondaryBar)
+                end
+            end)
+            rightArrow:Hide()
+            iconFrame.rightArrow = rightArrow
+            
             -- Cooldown
             local cooldown = CreateFrame("Frame", frame:GetName().."Cooldown"..i, iconFrame)
             cooldown:SetAllPoints(iconFrame)
@@ -910,6 +1012,8 @@ function ConsumesManagerBar_UpdateBar(frame, items, itemCount, isSecondaryBar)
         -- Update icon content
         iconFrame.itemID = item.id
         iconFrame.icon:SetTexture(item.texture)
+        iconFrame.leftArrow.itemID = item.id
+        iconFrame.rightArrow.itemID = item.id
         
         -- Update count display - show empty for 0 count
         if item.count > 0 then
@@ -1091,14 +1195,26 @@ function ConsumesManagerBar_UpdateBar(frame, items, itemCount, isSecondaryBar)
             end
         end
         
-        -- Show move indicator in edit mode (regardless of availability)
+        -- Show/hide move indicator and arrows based on edit mode
         if editMode then
             if iconFrame.moveIndicator then
                 iconFrame.moveIndicator:Show()
             end
+            if iconFrame.leftArrow then
+                iconFrame.leftArrow:Show()
+            end
+            if iconFrame.rightArrow then
+                iconFrame.rightArrow:Show()
+            end
         else
             if iconFrame.moveIndicator then
                 iconFrame.moveIndicator:Hide()
+            end
+            if iconFrame.leftArrow then
+                iconFrame.leftArrow:Hide()
+            end
+            if iconFrame.rightArrow then
+                iconFrame.rightArrow:Hide()
             end
         end
         
@@ -1115,6 +1231,110 @@ function ConsumesManagerBar_UpdateBar(frame, items, itemCount, isSecondaryBar)
         frame:Show()
     else
         frame:Hide()
+    end
+end
+
+function ConsumesManagerBar_MoveItemLeft(itemID, isSecondaryBar)
+    -- Get all items in the current bar
+    local allItems = {}
+    local itemCount = 0
+    
+    if ConsumesManager_SelectedItems then
+        for id, isTracked in ConsumesManager_SelectedItems do
+            if isTracked then
+                if (isSecondaryBar and iconVisibility[id]) or (not isSecondaryBar and not iconVisibility[id]) then
+                    itemCount = itemCount + 1
+                    allItems[itemCount] = {
+                        id = id,
+                        effectivePriority = ConsumesManagerBar_GetEffectivePriority(id)
+                    }
+                end
+            end
+        end
+    end
+    
+    -- Sort by effective priority
+    table.sort(allItems, function(a, b)
+        return a.effectivePriority < b.effectivePriority
+    end)
+    
+    -- Find the current position of the item
+    local currentPos = nil
+    for i = 1, itemCount do
+        if allItems[i].id == itemID then
+            currentPos = i
+            break
+        end
+    end
+    
+    -- Can't move left if already at position 1
+    if currentPos and currentPos > 1 then
+        -- Get the item to swap with
+        local swapItemID = allItems[currentPos - 1].id
+        
+        -- Get current priorities
+        local currentPriority = ConsumesManagerBar_GetEffectivePriority(itemID)
+        local swapPriority = ConsumesManagerBar_GetEffectivePriority(swapItemID)
+        
+        -- Swap priorities (create custom priorities for both if needed)
+        ConsumesManagerBar_SetCustomPriority(itemID, swapPriority)
+        ConsumesManagerBar_SetCustomPriority(swapItemID, currentPriority)
+        
+        -- Update bars
+        ConsumesManagerBar_UpdateBars()
+        DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar: Moved item left.")
+    end
+end
+
+function ConsumesManagerBar_MoveItemRight(itemID, isSecondaryBar)
+    -- Get all items in the current bar
+    local allItems = {}
+    local itemCount = 0
+    
+    if ConsumesManager_SelectedItems then
+        for id, isTracked in ConsumesManager_SelectedItems do
+            if isTracked then
+                if (isSecondaryBar and iconVisibility[id]) or (not isSecondaryBar and not iconVisibility[id]) then
+                    itemCount = itemCount + 1
+                    allItems[itemCount] = {
+                        id = id,
+                        effectivePriority = ConsumesManagerBar_GetEffectivePriority(id)
+                    }
+                end
+            end
+        end
+    end
+    
+    -- Sort by effective priority
+    table.sort(allItems, function(a, b)
+        return a.effectivePriority < b.effectivePriority
+    end)
+    
+    -- Find the current position of the item
+    local currentPos = nil
+    for i = 1, itemCount do
+        if allItems[i].id == itemID then
+            currentPos = i
+            break
+        end
+    end
+    
+    -- Can't move right if already at the last position
+    if currentPos and currentPos < itemCount then
+        -- Get the item to swap with
+        local swapItemID = allItems[currentPos + 1].id
+        
+        -- Get current priorities
+        local currentPriority = ConsumesManagerBar_GetEffectivePriority(itemID)
+        local swapPriority = ConsumesManagerBar_GetEffectivePriority(swapItemID)
+        
+        -- Swap priorities (create custom priorities for both if needed)
+        ConsumesManagerBar_SetCustomPriority(itemID, swapPriority)
+        ConsumesManagerBar_SetCustomPriority(swapItemID, currentPriority)
+        
+        -- Update bars
+        ConsumesManagerBar_UpdateBars()
+        DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar: Moved item right.")
     end
 end
 
@@ -1179,6 +1399,17 @@ function ConsumesManagerBar_ShowTooltip(iconFrame, isSecondaryBar)
             GameTooltip:AddLine("Count: 0 (Not in bags)", 1, 0.5, 0.5)
         end
         
+        -- Show priority information
+        local defaultPriority = ConsumesManagerBar_GetItemBuffData(iconFrame.itemID).priority or 99
+        local effectivePriority = ConsumesManagerBar_GetEffectivePriority(iconFrame.itemID)
+        
+        if customPriorities[iconFrame.itemID] then
+            GameTooltip:AddLine("Priority: " .. effectivePriority .. " (Custom)", 0.5, 1, 0.5)
+            GameTooltip:AddLine("Default Priority: " .. defaultPriority, 0.7, 0.7, 0.7)
+        else
+            GameTooltip:AddLine("Priority: " .. effectivePriority .. " (Default)", 1, 1, 1)
+        end
+        
         -- Show buff status with time info
         if buffedItems[iconFrame.itemID] then
             local buffCount = buffedItems[iconFrame.itemID]
@@ -1207,6 +1438,7 @@ function ConsumesManagerBar_ShowTooltip(iconFrame, isSecondaryBar)
             else
                 GameTooltip:AddLine("Click to move to secondary bar", 0.5, 1, 0.5)
             end
+            GameTooltip:AddLine("Use left/right arrows to change order", 0.8, 0.8, 0.8)
         else
             if count > 0 then
                 GameTooltip:AddLine("Click to use", 0.5, 1, 0.5)
@@ -1231,7 +1463,8 @@ end
 function ConsumesManagerBar_ToggleEditMode()
     editMode = not editMode
     if editMode then
-        DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar: Edit mode ON - Click icons to move between bars")
+        DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar: Edit mode ON - Click icons to move between bars, use arrows to reorder")
+        DEFAULT_CHAT_FRAME:AddMessage("Use /cmbarresetorder to reset all custom ordering")
     else
         DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar: Edit mode OFF")
     end
@@ -1339,6 +1572,13 @@ SlashCmdList["CONSUMESBARSCALE"] = function(msg)
         DEFAULT_CHAT_FRAME:AddMessage("Usage: /cmbarscale <value>")
         DEFAULT_CHAT_FRAME:AddMessage("Valid range: 0.5 - 2.0 (0.5 = 50%, 1.0 = 100%, 2.0 = 200%)")
     end
+end
+
+-- Slash command to reset custom ordering
+SLASH_CONSUMESBARRESETORDER1 = "/cmbarresetorder"
+SLASH_CONSUMESBARRESETORDER2 = "/consumesbarresetorder"
+SlashCmdList["CONSUMESBARRESETORDER"] = function(msg)
+    ConsumesManagerBar_ResetAllCustomPriorities()
 end
 
 local initFrame = CreateFrame("Frame")
