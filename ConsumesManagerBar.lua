@@ -36,6 +36,185 @@ local customPriorities = {} -- itemID -> custom priority value (lower = higher p
 local draggingItem = nil -- Item being dragged for reordering
 local dragStartIndex = 0
 
+-- Glow effect tracking for missing buffs
+local glowingIcons = {} -- itemID -> {frame = iconFrame, overlay = glowOverlay}
+
+-- Glow reminder settings
+local glowReminders = {} -- itemID -> boolean (nil = default enabled, false = disabled, true = enabled)
+
+-- Helper function to check if DoiteGlow is available
+function ConsumesManagerBar_IsGlowAvailable()
+    return DoiteGlow ~= nil
+end
+
+function ConsumesManagerBar_LoadGlowSettings()
+    -- Load glow reminder settings from saved variables
+    if ConsumesManagerBar_Settings2.glowReminders then
+        glowReminders = ConsumesManagerBar_Settings2.glowReminders
+    else
+        glowReminders = {}
+        ConsumesManagerBar_Settings2.glowReminders = glowReminders
+    end
+end
+
+function ConsumesManagerBar_SaveGlowSettings()
+    -- Save glow reminder settings
+    ConsumesManagerBar_Settings2.glowReminders = glowReminders
+end
+
+function ConsumesManagerBar_ToggleGlowReminder(itemID)
+    -- Toggle glow reminder setting for an item
+    -- nil = default enabled (checkbox checked)
+    -- false = explicitly disabled (checkbox unchecked)
+    
+    local currentState = glowReminders[itemID]
+    local itemName = consumablesList[itemID] or "Item " .. itemID
+    
+    if currentState == false then
+        -- Currently explicitly disabled, remove setting (go back to default enabled)
+        glowReminders[itemID] = nil
+        DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar: Glow reminder ENABLED for " .. itemName)
+    else
+        -- Currently enabled (nil or true), disable it
+        glowReminders[itemID] = false
+        DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar: Glow reminder DISABLED for " .. itemName)
+    end
+    
+    ConsumesManagerBar_SaveGlowSettings()
+    ConsumesManagerBar_UpdateBars()
+end
+
+function ConsumesManagerBar_ShouldGlow(item)
+    -- Determine if an item should glow when buff is missing
+    if not item then return false end
+    
+    -- Check if glow is explicitly disabled for this item
+    if glowReminders[item.id] == false then
+        return false
+    end
+    
+    -- Default behavior: glow if item is available but not buffed
+    return (item.count > 0) and (not item.buffed)
+end
+
+function ConsumesManagerBar_StartGlow(iconFrame)
+    if not iconFrame or not iconFrame:IsShown() then
+        return
+    end
+    
+    -- Stop any existing glow for this item first (in case item moved to different frame)
+    ConsumesManagerBar_StopGlowByItemID(iconFrame.itemID)
+    
+    -- Try to use DoiteGlow if available
+    if ConsumesManagerBar_IsGlowAvailable() then
+        DoiteGlow.Start(iconFrame)
+        glowingIcons[iconFrame.itemID] = {
+            frame = iconFrame,
+            usingDoiteGlow = true
+        }
+    else
+        -- Fallback to simple highlight if DoiteGlow is not available
+        if not iconFrame.missingBuffGlow then
+            -- Create a simple glow effect
+            local glow = iconFrame:CreateTexture(nil, "OVERLAY")
+            glow:SetWidth(ICON_SIZE + 8)
+            glow:SetHeight(ICON_SIZE + 8)
+            glow:SetPoint("CENTER", iconFrame, "CENTER", 0, 0)
+            glow:SetTexture("Interface\\Buttons\\UI-ActionButton-Border")
+            glow:SetBlendMode("ADD")
+            glow:SetVertexColor(1, 0.2, 0.2, 0.8) -- Red glow for missing buffs
+            glow:SetDrawLayer("OVERLAY", 6)
+            iconFrame.missingBuffGlow = glow
+        end
+        
+        iconFrame.missingBuffGlow:Show()
+        glowingIcons[iconFrame.itemID] = {
+            frame = iconFrame,
+            usingDoiteGlow = false
+        }
+    end
+end
+
+function ConsumesManagerBar_StopGlowByItemID(itemID)
+    -- Stop glow for a specific item ID (regardless of which frame it's on)
+    local glowData = glowingIcons[itemID]
+    if glowData then
+        if glowData.usingDoiteGlow and ConsumesManagerBar_IsGlowAvailable() then
+            DoiteGlow.Stop(glowData.frame)
+        elseif glowData.frame.missingBuffGlow then
+            glowData.frame.missingBuffGlow:Hide()
+        end
+        glowingIcons[itemID] = nil
+    end
+end
+
+function ConsumesManagerBar_StopGlow(iconFrame)
+    if not iconFrame or not iconFrame.itemID then
+        return
+    end
+    
+    -- Check if this frame actually has the glow
+    local glowData = glowingIcons[iconFrame.itemID]
+    if glowData and glowData.frame == iconFrame then
+        if glowData.usingDoiteGlow and ConsumesManagerBar_IsGlowAvailable() then
+            DoiteGlow.Stop(iconFrame)
+        elseif iconFrame.missingBuffGlow then
+            iconFrame.missingBuffGlow:Hide()
+        end
+        glowingIcons[iconFrame.itemID] = nil
+    end
+end
+
+function ConsumesManagerBar_UpdateGlowForIcon(iconFrame, item)
+    if not iconFrame or not item then
+        return
+    end
+    
+    -- Check if item should glow based on settings and state
+    local shouldGlow = ConsumesManagerBar_ShouldGlow(item)
+    
+    -- Check current glow state for this frame
+    local currentGlowData = glowingIcons[item.id]
+    local isCurrentlyGlowing = currentGlowData and currentGlowData.frame == iconFrame
+    
+    -- Only change state if it's different
+    if shouldGlow and not isCurrentlyGlowing then
+        ConsumesManagerBar_StartGlow(iconFrame)
+    elseif not shouldGlow and isCurrentlyGlowing then
+        ConsumesManagerBar_StopGlow(iconFrame)
+    end
+    -- If shouldGlow and isCurrentlyGlowing are the same, do nothing
+end
+
+function ConsumesManagerBar_CleanupGlowEffects()
+    -- Clean up any glow effects for icons that no longer exist
+    local currentItemIDs = {}
+    
+    -- Collect all current item IDs from both bars
+    if barFrame and barFrame.icons then
+        for i, iconFrame in ipairs(barFrame.icons) do
+            if iconFrame and iconFrame.itemID then
+                currentItemIDs[iconFrame.itemID] = true
+            end
+        end
+    end
+    
+    if disabledBarFrame and disabledBarFrame.icons then
+        for i, iconFrame in ipairs(disabledBarFrame.icons) do
+            if iconFrame and iconFrame.itemID then
+                currentItemIDs[iconFrame.itemID] = true
+            end
+        end
+    end
+    
+    -- Remove glow effects for items that are no longer displayed
+    for itemID, glowData in pairs(glowingIcons) do
+        if not currentItemIDs[itemID] then
+            ConsumesManagerBar_StopGlowByItemID(itemID)
+        end
+    end
+end
+
 function ConsumesManagerBar_GetItemTexture(itemID)
     -- If texture is actually the 9th return (equipLoc position)
     local _, _, _, _, _, _, _, _, texture = GetItemInfo(itemID)
@@ -106,6 +285,14 @@ function ConsumesManagerBar_ResetAllCustomPriorities()
     ConsumesManagerBar_SaveCustomPriorities()
     ConsumesManagerBar_UpdateBars()
     DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar: All custom priorities reset to defaults.")
+end
+
+function ConsumesManagerBar_ResetAllGlowSettings()
+    -- Reset all glow reminder settings to default (enabled)
+    glowReminders = {}
+    ConsumesManagerBar_SaveGlowSettings()
+    ConsumesManagerBar_UpdateBars()
+    DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar: All glow reminder settings reset to defaults (enabled).")
 end
 
 function ConsumesManagerBar_GetBuffDuration(itemID)
@@ -267,6 +454,16 @@ function ConsumesManagerBar_ApplyScaling()
                     iconFrame.moveIndicator:SetHeight(12 * scale)
                 end
                 
+                -- Update glow checkbox size
+                if iconFrame.glowCheckbox then
+                    iconFrame.glowCheckbox:SetWidth(12 * scale)
+                    iconFrame.glowCheckbox:SetHeight(12 * scale)
+                    if iconFrame.glowCheckbox.checkTexture then
+                        iconFrame.glowCheckbox.checkTexture:SetWidth(10 * scale)
+                        iconFrame.glowCheckbox.checkTexture:SetHeight(10 * scale)
+                    end
+                end
+                
                 -- Update arrow button sizes
                 if iconFrame.leftArrow then
                     iconFrame.leftArrow:SetWidth(12 * scale)
@@ -291,6 +488,12 @@ function ConsumesManagerBar_ApplyScaling()
                     if fontSize < 8 then fontSize = 8 end
                     if fontSize > 18 then fontSize = 18 end
                     iconFrame.timeText:SetFont("Fonts\\FRIZQT__.TTF", fontSize, "THICKOUTLINE")
+                end
+                
+                -- Update glow size for missing buffs
+                if iconFrame.missingBuffGlow then
+                    iconFrame.missingBuffGlow:SetWidth(scaledIconSize + 8 * scale)
+                    iconFrame.missingBuffGlow:SetHeight(scaledIconSize + 8 * scale)
                 end
             end
         end
@@ -328,6 +531,16 @@ function ConsumesManagerBar_ApplyScaling()
                     iconFrame.moveIndicator:SetHeight(12 * scale)
                 end
                 
+                -- Update glow checkbox size
+                if iconFrame.glowCheckbox then
+                    iconFrame.glowCheckbox:SetWidth(12 * scale)
+                    iconFrame.glowCheckbox:SetHeight(12 * scale)
+                    if iconFrame.glowCheckbox.checkTexture then
+                        iconFrame.glowCheckbox.checkTexture:SetWidth(10 * scale)
+                        iconFrame.glowCheckbox.checkTexture:SetHeight(10 * scale)
+                    end
+                end
+                
                 -- Update arrow button sizes
                 if iconFrame.leftArrow then
                     iconFrame.leftArrow:SetWidth(12 * scale)
@@ -352,6 +565,12 @@ function ConsumesManagerBar_ApplyScaling()
                     if fontSize < 8 then fontSize = 8 end
                     if fontSize > 18 then fontSize = 18 end
                     iconFrame.timeText:SetFont("Fonts\\FRIZQT__.TTF", fontSize, "THICKOUTLINE")
+                end
+                
+                -- Update glow size for missing buffs
+                if iconFrame.missingBuffGlow then
+                    iconFrame.missingBuffGlow:SetWidth(scaledIconSize + 8 * scale)
+                    iconFrame.missingBuffGlow:SetHeight(scaledIconSize + 8 * scale)
                 end
             end
         end
@@ -513,7 +732,7 @@ function ConsumesManagerBar_Initialize()
     -- Edit mode indicator
     local editText = barFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     editText:SetPoint("BOTTOM", barFrame, "BOTTOM", 0, 5)
-    editText:SetText("EDIT MODE - Click icons to move between bars, use arrows to reorder")
+    editText:SetText("EDIT MODE - Click icons to move between bars, use arrows to reorder, click checkbox to toggle glow reminder")
     editText:SetTextColor(1, 0.5, 0.5)
     editText:Hide()
     barFrame.editText = editText
@@ -603,6 +822,9 @@ function ConsumesManagerBar_Initialize()
     -- Load custom priorities
     ConsumesManagerBar_LoadCustomPriorities()
     
+    -- Load glow settings
+    ConsumesManagerBar_LoadGlowSettings()
+    
     -- Hide titles after a few seconds
     barFrame:SetScript("OnShow", function()
         this.title:Show()
@@ -658,7 +880,13 @@ function ConsumesManagerBar_Initialize()
     -- Apply scaling
     ConsumesManagerBar_ApplyScaling()
     
-    DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar loaded! Two bars created - both fully functional.")
+    -- Check if DoiteGlow is available
+    if ConsumesManagerBar_IsGlowAvailable() then
+        DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar loaded! Glow effects enabled (DoiteGlow detected).")
+    else
+        DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar loaded! Glow effects enabled (fallback mode).")
+    end
+    DEFAULT_CHAT_FRAME:AddMessage("Two bars created - both fully functional.")
 end
 
 function ConsumesManagerBar_SavePosition()
@@ -783,6 +1011,9 @@ function ConsumesManagerBar_UpdateBars()
     
     -- Apply scaling after updating bars
     ConsumesManagerBar_ApplyScaling()
+    
+    -- Clean up old glow effects
+    ConsumesManagerBar_CleanupGlowEffects()
 end
 
 function ConsumesManagerBar_FormatTime(seconds)
@@ -936,6 +1167,59 @@ function ConsumesManagerBar_UpdateBar(frame, items, itemCount, isSecondaryBar)
             buffHighlight:Hide()
             iconFrame.buffHighlight = buffHighlight
             
+            -- Glow reminder checkbox (above icon in edit mode)
+            local glowCheckbox = CreateFrame("Button", frame:GetName().."GlowCheckbox"..i, iconFrame)
+            glowCheckbox:SetWidth(12 * scale)
+            glowCheckbox:SetHeight(12 * scale)
+            glowCheckbox:SetPoint("BOTTOM", iconFrame, "TOP", 0, 2 * scale)
+            glowCheckbox.itemID = nil
+            
+            -- Checkbox textures
+            glowCheckbox:SetNormalTexture("Interface\\Buttons\\UI-CheckBox-Up")
+            glowCheckbox:SetPushedTexture("Interface\\Buttons\\UI-CheckBox-Down")
+            glowCheckbox:SetHighlightTexture("Interface\\Buttons\\UI-CheckBox-Highlight")
+            
+            -- Checkmark texture for when enabled
+            local checkTexture = glowCheckbox:CreateTexture(nil, "OVERLAY")
+            checkTexture:SetWidth(10 * scale)
+            checkTexture:SetHeight(10 * scale)
+            checkTexture:SetPoint("CENTER", glowCheckbox, "CENTER", 0, 0)
+            checkTexture:SetTexture("Interface\\Buttons\\UI-CheckBox-Check")
+            checkTexture:Hide()
+            glowCheckbox.checkTexture = checkTexture
+            
+            glowCheckbox:SetScript("OnClick", function()
+                if this.itemID then
+                    ConsumesManagerBar_ToggleGlowReminder(this.itemID)
+                end
+            end)
+            
+            glowCheckbox:SetScript("OnEnter", function()
+                if this.itemID then
+                    local itemName = consumablesList[this.itemID] or "Item " .. this.itemID
+                    GameTooltip:SetOwner(this, "ANCHOR_BOTTOM")
+                    GameTooltip:SetText("Glow Reminder")
+                    GameTooltip:AddLine("Click to toggle glow reminder for:", 1, 1, 1)
+                    GameTooltip:AddLine(itemName, 1, 0.82, 0)
+                    
+                    local glowSetting = glowReminders[this.itemID]
+                    if glowSetting == false then
+                        GameTooltip:AddLine("Status: DISABLED (will not glow when buff missing)", 1, 0.3, 0.3)
+                    else
+                        GameTooltip:AddLine("Status: ENABLED (will glow when buff missing)", 0.3, 1, 0.3)
+                    end
+                    
+                    GameTooltip:Show()
+                end
+            end)
+            
+            glowCheckbox:SetScript("OnLeave", function()
+                GameTooltip:Hide()
+            end)
+            
+            glowCheckbox:Hide()
+            iconFrame.glowCheckbox = glowCheckbox
+            
             -- Left arrow button for reordering
             local leftArrow = CreateFrame("Button", frame:GetName().."LeftArrow"..i, iconFrame)
             leftArrow:SetWidth(16 * scale)
@@ -1014,6 +1298,17 @@ function ConsumesManagerBar_UpdateBar(frame, items, itemCount, isSecondaryBar)
         iconFrame.icon:SetTexture(item.texture)
         iconFrame.leftArrow.itemID = item.id
         iconFrame.rightArrow.itemID = item.id
+        iconFrame.glowCheckbox.itemID = item.id
+        
+        -- Update glow checkbox state
+        local glowSetting = glowReminders[item.id]
+        if glowSetting == false then
+            -- Explicitly disabled - no checkmark
+            iconFrame.glowCheckbox.checkTexture:Hide()
+        else
+            -- Enabled (default nil or explicitly true) - show checkmark
+            iconFrame.glowCheckbox.checkTexture:Show()
+        end
         
         -- Update count display - show empty for 0 count
         if item.count > 0 then
@@ -1195,7 +1490,7 @@ function ConsumesManagerBar_UpdateBar(frame, items, itemCount, isSecondaryBar)
             end
         end
         
-        -- Show/hide move indicator and arrows based on edit mode
+        -- Show/hide move indicator, arrows, and glow checkbox based on edit mode
         if editMode then
             if iconFrame.moveIndicator then
                 iconFrame.moveIndicator:Show()
@@ -1205,6 +1500,9 @@ function ConsumesManagerBar_UpdateBar(frame, items, itemCount, isSecondaryBar)
             end
             if iconFrame.rightArrow then
                 iconFrame.rightArrow:Show()
+            end
+            if iconFrame.glowCheckbox then
+                iconFrame.glowCheckbox:Show()
             end
         else
             if iconFrame.moveIndicator then
@@ -1216,10 +1514,16 @@ function ConsumesManagerBar_UpdateBar(frame, items, itemCount, isSecondaryBar)
             if iconFrame.rightArrow then
                 iconFrame.rightArrow:Hide()
             end
+            if iconFrame.glowCheckbox then
+                iconFrame.glowCheckbox:Hide()
+            end
         end
         
         -- Simple cooldown handling
         local start, duration = GetContainerItemCooldown(0, 1)
+        
+        -- Update glow effect for missing buffs
+        ConsumesManagerBar_UpdateGlowForIcon(iconFrame, item)
         
         iconFrame:Show()
     end
@@ -1410,6 +1714,14 @@ function ConsumesManagerBar_ShowTooltip(iconFrame, isSecondaryBar)
             GameTooltip:AddLine("Priority: " .. effectivePriority .. " (Default)", 1, 1, 1)
         end
         
+        -- Show glow reminder status
+        local glowStatus = glowReminders[iconFrame.itemID]
+        if glowStatus == false then
+            GameTooltip:AddLine("Glow Reminder: DISABLED", 1, 0.3, 0.3)
+        else
+            GameTooltip:AddLine("Glow Reminder: ENABLED", 0.3, 1, 0.3)
+        end
+        
         -- Show buff status with time info
         if buffedItems[iconFrame.itemID] then
             local buffCount = buffedItems[iconFrame.itemID]
@@ -1430,6 +1742,17 @@ function ConsumesManagerBar_ShowTooltip(iconFrame, isSecondaryBar)
             elseif timeLeft == -1 then
                 GameTooltip:AddLine("Duration: Weapon Enchant", 0.8, 0.8, 0.8) -- Gray
             end
+        else
+            -- Item is not buffed - show this prominently
+            if count > 0 then
+                if glowStatus == false then
+                    GameTooltip:AddLine("NOT BUFFED (Glow disabled)", 0.7, 0.7, 0.7)
+                else
+                    GameTooltip:AddLine("NOT BUFFED - Click to use", 1, 0.3, 0.3) -- Red warning
+                end
+            else
+                GameTooltip:AddLine("Not available in bags", 0.7, 0.7, 0.7)
+            end
         end
         
         if editMode then
@@ -1439,9 +1762,14 @@ function ConsumesManagerBar_ShowTooltip(iconFrame, isSecondaryBar)
                 GameTooltip:AddLine("Click to move to secondary bar", 0.5, 1, 0.5)
             end
             GameTooltip:AddLine("Use left/right arrows to change order", 0.8, 0.8, 0.8)
+            GameTooltip:AddLine("Click checkbox above to toggle glow reminder", 0.8, 0.8, 0.8)
         else
             if count > 0 then
-                GameTooltip:AddLine("Click to use", 0.5, 1, 0.5)
+                if buffedItems[iconFrame.itemID] then
+                    GameTooltip:AddLine("Click to refresh buff", 0.5, 1, 0.5)
+                else
+                    GameTooltip:AddLine("Click to apply buff", 0.5, 1, 0.5)
+                end
             else
                 GameTooltip:AddLine("Item not available", 1, 0.5, 0.5)
             end
@@ -1463,8 +1791,12 @@ end
 function ConsumesManagerBar_ToggleEditMode()
     editMode = not editMode
     if editMode then
-        DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar: Edit mode ON - Click icons to move between bars, use arrows to reorder")
+        DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar: Edit mode ON")
+        DEFAULT_CHAT_FRAME:AddMessage("Click icons to move between bars")
+        DEFAULT_CHAT_FRAME:AddMessage("Use arrows to reorder")
+        DEFAULT_CHAT_FRAME:AddMessage("Click checkbox above icon to toggle glow reminder")
         DEFAULT_CHAT_FRAME:AddMessage("Use /cmbarresetorder to reset all custom ordering")
+        DEFAULT_CHAT_FRAME:AddMessage("Use /cmbarresetglow to reset all glow settings")
     else
         DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar: Edit mode OFF")
     end
@@ -1579,6 +1911,13 @@ SLASH_CONSUMESBARRESETORDER1 = "/cmbarresetorder"
 SLASH_CONSUMESBARRESETORDER2 = "/consumesbarresetorder"
 SlashCmdList["CONSUMESBARRESETORDER"] = function(msg)
     ConsumesManagerBar_ResetAllCustomPriorities()
+end
+
+-- Slash command to reset glow settings
+SLASH_CONSUMESBARRESETGLOW1 = "/cmbarresetglow"
+SLASH_CONSUMESBARRESETGLOW2 = "/consumesbarresetglow"
+SlashCmdList["CONSUMESBARRESETGLOW"] = function(msg)
+    ConsumesManagerBar_ResetAllGlowSettings()
 end
 
 local initFrame = CreateFrame("Frame")
