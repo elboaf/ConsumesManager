@@ -216,9 +216,118 @@ function ConsumesManagerBar_CleanupGlowEffects()
 end
 
 function ConsumesManagerBar_GetItemTexture(itemID)
-    -- If texture is actually the 9th return (equipLoc position)
+    -- Check if we already have a dynamically loaded texture cached
+    if itemTextureCache[itemID] then
+        return itemTextureCache[itemID]
+    end
+    
+    -- Try to get the texture dynamically from the game (this works even if item is not in bags)
+    -- This is the preferred method as it gets the actual item texture
     local _, _, _, _, _, _, _, _, texture = GetItemInfo(itemID)
-    return texture or "Interface\\Icons\\INV_Misc_QuestionMark"
+    
+    if texture then
+        -- Cache the dynamically loaded texture for future use
+        itemTextureCache[itemID] = texture
+        return texture
+    end
+    
+    -- Only use itemlist.lua or consumablesCategories textures as a LAST RESORT
+    -- We'll mark these as temporary placeholders
+    local placeholderTexture = nil
+    
+    -- Try to use the texture from consumablesCategories if available
+    if consumablesCategories then
+        for categoryName, consumables in pairs(consumablesCategories) do
+            if consumables then
+                for _, consumable in ipairs(consumables) do
+                    if consumable.id == itemID and consumable.texture then
+                        placeholderTexture = consumable.texture
+                        break
+                    end
+                end
+            end
+            if placeholderTexture then break end
+        end
+    end
+    
+    -- If we found a placeholder, use it but don't cache it permanently
+    if placeholderTexture then
+        return placeholderTexture
+    end
+    
+    -- Fallback to question mark
+    return "Interface\\Icons\\INV_Misc_QuestionMark"
+end
+
+-- Function to attempt to refresh item textures when items are in bags
+function ConsumesManagerBar_RefreshItemTextures()
+    if not ConsumesManager_SelectedItems then return 0 end
+    
+    local updated = 0
+    for itemID, isTracked in ConsumesManager_SelectedItems do
+        if isTracked then
+            -- Try to get the actual item texture from the game
+            local _, _, _, _, _, _, _, _, texture = GetItemInfo(itemID)
+            
+            if texture then
+                -- Check if we already have this texture cached
+                local currentTexture = itemTextureCache[itemID]
+                if not currentTexture or currentTexture == "Interface\\Icons\\INV_Misc_QuestionMark" or 
+                   string.find(currentTexture, "Interface\\Icons\\Spell_", 1, true) then
+                    -- We got a new texture or are replacing a placeholder! Cache it
+                    itemTextureCache[itemID] = texture
+                    updated = updated + 1
+                end
+            end
+        end
+    end
+    
+    if updated > 0 then
+        -- Save the updated texture cache
+        ConsumesManagerBar_SaveTextureCache()
+        -- Update the bars to show the new textures
+        ConsumesManagerBar_UpdateBars()
+        -- REMOVED CHAT MESSAGE TO PREVENT SPAM
+    end
+    
+    return updated
+end
+
+-- Function to force refresh a specific item's texture
+function ConsumesManagerBar_ForceRefreshTexture(itemID)
+    -- Clear any cached texture for this item
+    itemTextureCache[itemID] = nil
+    
+    -- Try to get fresh texture from the game
+    local _, _, _, _, _, _, _, _, texture = GetItemInfo(itemID)
+    
+    if texture then
+        itemTextureCache[itemID] = texture
+        ConsumesManagerBar_SaveTextureCache()
+        ConsumesManagerBar_UpdateBars()
+        return true
+    end
+    
+    return false
+end
+
+-- Function to save the texture cache to saved variables
+function ConsumesManagerBar_SaveTextureCache()
+    if ConsumesManagerBar_Settings2 then
+        ConsumesManagerBar_Settings2.itemTextureCache = itemTextureCache
+    end
+end
+
+-- Function to load the texture cache from saved variables
+function ConsumesManagerBar_LoadTextureCache()
+    if ConsumesManagerBar_Settings2 and ConsumesManagerBar_Settings2.itemTextureCache then
+        itemTextureCache = ConsumesManagerBar_Settings2.itemTextureCache
+    else
+        itemTextureCache = {}
+        if ConsumesManagerBar_Settings2 then
+            ConsumesManagerBar_Settings2.itemTextureCache = itemTextureCache
+        end
+    end
 end
 
 function ConsumesManagerBar_GetItemBuffData(itemID)
@@ -825,6 +934,9 @@ function ConsumesManagerBar_Initialize()
     -- Load glow settings
     ConsumesManagerBar_LoadGlowSettings()
     
+    -- Load texture cache
+    ConsumesManagerBar_LoadTextureCache()
+    
     -- Hide titles after a few seconds
     barFrame:SetScript("OnShow", function()
         this.title:Show()
@@ -833,7 +945,7 @@ function ConsumesManagerBar_Initialize()
         end
     end)
     
-    -- Hide titles after 3 seconds
+    -- Hide titles after 3 seconds and update periodically
     barFrame:SetScript("OnUpdate", function()
         -- Hide main bar title
         if this.title and this.title:IsVisible() then
@@ -863,6 +975,16 @@ function ConsumesManagerBar_Initialize()
         if GetTime() - this.lastBarUpdate > 0.5 then
             ConsumesManagerBar_UpdateBars()
             this.lastBarUpdate = GetTime()
+        end
+        
+        -- Periodically refresh textures (every 10 seconds) - SILENTLY
+        if not this.lastTextureRefresh then
+            this.lastTextureRefresh = GetTime()
+        end
+        
+        if GetTime() - this.lastTextureRefresh > 10 then
+            ConsumesManagerBar_RefreshItemTextures() -- This runs silently now
+            this.lastTextureRefresh = GetTime()
         end
         
         -- Update pulse animations every frame
@@ -918,6 +1040,9 @@ function ConsumesManagerBar_SavePosition()
         ConsumesManagerBar_Settings2.disabledBarPosition.x = disabledBarX
         ConsumesManagerBar_Settings2.disabledBarPosition.y = disabledBarY
     end
+    
+    -- Save texture cache when saving position
+    ConsumesManagerBar_SaveTextureCache()
 end
 
 function ConsumesManagerBar_UpdateBars()
@@ -952,7 +1077,7 @@ function ConsumesManagerBar_UpdateBars()
                     id = itemID,
                     count = count,
                     name = consumablesList[itemID] or "Unknown Item",
-                    texture = ConsumesManagerBar_GetItemTexture(itemID), -- DYNAMIC TEXTURE LOADING
+                    texture = ConsumesManagerBar_GetItemTexture(itemID), -- Uses cached or dynamic texture
                     hidden = iconVisibility[itemID], -- true if hidden from main bar
                     buffed = buffedItems[itemID], -- now stores count (1 for regular buffs, 1-2 for weapon enchants)
                     timeLeft = buffTimes[itemID], -- remaining time in seconds or nil
@@ -1919,6 +2044,8 @@ SLASH_CONSUMESBARRESETGLOW2 = "/consumesbarresetglow"
 SlashCmdList["CONSUMESBARRESETGLOW"] = function(msg)
     ConsumesManagerBar_ResetAllGlowSettings()
 end
+
+-- REMOVED: Slash command to refresh textures (was causing problems)
 
 local initFrame = CreateFrame("Frame")
 initFrame:RegisterEvent("VARIABLES_LOADED")
