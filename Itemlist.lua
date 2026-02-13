@@ -81,7 +81,8 @@ consumablesCategories = {
         { id = 20520, name = "Dark Rune", mats = {"Looted from NPC's in Stratholme"}, texture = "Interface\\Icons\\spell_shadow_sealofkings", description = "Restores 900 to 1501 mana at the cost of 600 to 1001 life.", priority = 69, spellId = 0 },
         { id = 12662, name = "Demonic Rune", mats = {"Looted from various world NPC's"}, texture = "Interface\\Icons\\inv_misc_rune_04", description = "Restores 900 to 1501 mana at the cost of 600 to 1001 life.", priority = 70, spellId = 0 },
         { id = 9172, name = "Invisibility Potion", mats = {"1x Ghost Mushroom", "1x Sungrass", "1x Crystal Vial"}, texture = "Interface\\Icons\\inv_potion_25", description = "Gives the imbiber invisibility for 18 sec.", priority = 71, spellId = 11392 },
-        { id = 3823, name = "Lesser Invisibility Potion", mats = {"1x Fadeleaf", "1x Wild Steelbloom", "1x Leaded Vial"}, texture = "Interface\\Icons\\inv_potion_18", description = " Gives the imbiber lesser invisibility for 15 sec.", priority = 72, spellId = 3680 }
+        { id = 3823, name = "Lesser Invisibility Potion", mats = {"1x Fadeleaf", "1x Wild Steelbloom", "1x Leaded Vial"}, texture = "Interface\\Icons\\inv_potion_18", description = " Gives the imbiber lesser invisibility for 15 sec.", priority = 72, spellId = 3680 },
+        { id = 8008, name = "Mana Ruby", mats = {"Conjured"}, texture = "Interface\\Icons\\INV_Misc_Gem_Ruby_01", description = "Restores 1000 to 1200 mana.", priority = 121, spellId = 0 }
     },
     ["Food Buffs"] = {
         { id = 21023, name = "Dirge's Kickin' Chimaerok Chops", mats = {"1x Hot Spices", "1x Goblin Rocket Fuel", "1x Deeprock Salt", "1x Chimaerok Tenderloin"}, texture = "Interface\\Icons\\INV_Misc_Food_65", description = "Increases Strength by 25 for 1 hour.", priority = 73, spellId = 25661 },
