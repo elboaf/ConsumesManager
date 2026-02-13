@@ -132,6 +132,12 @@ consumablesCategories = {
         { id = 10305, name = "Scroll of Protection IV", mats = {"Looted from various world NPC's"}, texture = "Interface\\Icons\\INV_Scroll_07", description = "Increases the target's Armor by 240 for 30 minutes.", priority = 114, spellId = 12175 },
         { id = 11564, name = "Crystal Ward", mats = {"Red Power Crystal Red(10), Green Power Crystal(10) (Western Crystal Pylon - Ungoro Crater)"}, texture = "Interface\\Icons\\INV_Scroll_07", description = "Increases the target's Armor by 200 for 1800 sec.", priority = 115, spellId = 15233 },
         { id = 8956, name = "Oil of Immolation", mats = {"Firebloom, Goldthorn, Crystal Vial"}, texture = "", description = "Does 50 fire damage to any enemies within a 5 yard radius around the caster every 3 seconds for 15 sec", priority = 116, spellId = 11350 },
+    },
+    ["Event Buffs"] = {
+        { id = 22238, name = "Very Berry Cream", mats = {"Love is in the Air"}, texture = "Interface\\Icons\\Inv_valentineschocolate02", description = "Increases damage done from spells by up to 23 for 1 hour.", priority = 117, spellId = 27721 },
+        { id = 22237, name = "Dark Desire", mats = {"Love is in the Air"}, texture = "Interface\\Icons\\INV_ValentinesChocolate04", description = "Improves your chance to hit by 2% for 1 hour.", priority = 118, spellId = 27723 },
+        { id = 22236, name = "Buttermilk Delight", mats = {"Love is in the Air"}, texture = "Interface\\Icons\\INV_ValentinesChocolate01", description = "Increases Defense by 13 for 1 hour.", priority = 119, spellId = 27720 },
+        { id = 22239, name = "Sweet Surprise", mats = {"Love is in the Air"}, texture = "Interface\\Icons\\INV_ValentinesChocolate03", description = "Increases healing done by magical spells by up to 44 for 1 hour.", priority = 120, spellId = 27722 },
     }
 }
 
