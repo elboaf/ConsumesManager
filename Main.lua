@@ -1,5 +1,5 @@
 -- Onload & Click Functionality -------------------------------------------------------------------------
-    WindowWidth = 350
+    WindowWidth = 420
 
     function ConsumesManager_OnLoad(self)
         self:RegisterForDrag("LeftButton")
@@ -485,11 +485,11 @@ function ConsumesManager_CreateMainWindow()
     tab3:SetScript("OnClick", tab3.originalOnClick)
 
     -- Settings Tab
-    --local tab4 = CreateTab("ConsumesManager_MainFrameTab4", "Interface\\Icons\\INV_Misc_Gear_01", 180, "Settings", 4)
-   -- tab4.originalOnClick = function()
-    --    ConsumesManager_ShowTab(4)
-    --end
-    --tab4:SetScript("OnClick", tab4.originalOnClick)
+    local tab4 = CreateTab("ConsumesManager_MainFrameTab4", "Interface\\Icons\\INV_Misc_Gear_01", 180, "Settings", 4)
+    tab4.originalOnClick = function()
+        ConsumesManager_ShowTab(4)
+    end
+    tab4:SetScript("OnClick", tab4.originalOnClick)
 
 
     -- Send Data Button
@@ -566,7 +566,9 @@ function ConsumesManager_CreateMainWindow()
     ConsumesManager_CreateManagerContent(tab1Content)
     ConsumesManager_CreateItemsContent(tab2Content)
     ConsumesManager_CreatePresetsContent(tab3Content)
-    ConsumesManager_CreateSettingsContent(tab4Content)
+    -- Settings tab is initialized via UpdateSettingsContent which sets up scroll frames first
+    ConsumesManager_MainFrame.tabs[4] = tab4Content
+    ConsumesManager_UpdateSettingsContent()
 
     ConsumesManager_UpdateTabStates()
 end
@@ -974,7 +976,7 @@ function ConsumesManager_UpdateManagerContent()
                     -- Sum counts across all selected characters
                     local totalCount = 0
                     for character, _ in pairs(ConsumesManager_Data[realmName]) do
-                        if type(ConsumesManager_Data[realmName][character]) == "table" and ConsumesManager_Options["Characters"][character] == true then
+                        if type(ConsumesManager_Data[realmName][character]) == "table" and ConsumesManager_Options["Characters"] and ConsumesManager_Options["Characters"][character] == true then
                             -- Make sure it's not a special field like "faction"
                             if character ~= "faction" then
                                 local inventory = ConsumesManager_Data[realmName][character]["inventory"] and ConsumesManager_Data[realmName][character]["inventory"][itemID] or 0
@@ -1084,7 +1086,7 @@ function ConsumesManager_UpdateManagerContent()
                     -- Sum counts across all selected characters
                     local totalCount = 0
                     for character, charData in pairs(ConsumesManager_Data[realmName]) do
-                        if type(charData) == "table" and ConsumesManager_Options["Characters"][character] == true then
+                        if type(charData) == "table" and ConsumesManager_Options["Characters"] and ConsumesManager_Options["Characters"][character] == true then
                             if character ~= "faction" then
                                 local inventory = charData["inventory"] and charData["inventory"][itemID] or 0
                                 local bank = charData["bank"] and charData["bank"][itemID] or 0
@@ -2394,764 +2396,370 @@ end
 
 -- Settings Window -----------------------------------------------------------------------------------
 function ConsumesManager_CreateSettingsContent(parentFrame)
-    -- Scroll Frame Setup
-    local scrollFrame = CreateFrame("ScrollFrame", "ConsumesManager_SettingsScrollFrame", parentFrame)
-    scrollFrame:SetPoint("TOPLEFT", parentFrame, "TOPLEFT", 0, 0)
-    scrollFrame:SetPoint("BOTTOMRIGHT", parentFrame, "BOTTOMRIGHT", -20, 0)
-    scrollFrame:EnableMouseWheel(true)
-    scrollFrame:SetScript("OnMouseWheel", function()
-        local delta = arg1
-        local current = this:GetVerticalScroll()
-        local maxScroll = this.maxScroll or 0
-        local newScroll = math.max(0, math.min(current - (delta * 20), maxScroll))
-        this:SetVerticalScroll(newScroll)
-        parentFrame.scrollBar:SetValue(newScroll)
+    -- Content is written into parentFrame.scrollChild,
+    -- which is managed by ConsumesManager_UpdateSettingsContent.
+    local child  = parentFrame.scrollChild
+    local LH     = 22   -- line height
+    local yOff   = -8
+    local colW   = 160  -- button column width
+
+    -- Helper: section title label
+    local function SectionTitle(text)
+        local lbl = child:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+        lbl:SetPoint("TOPLEFT", child, "TOPLEFT", 0, yOff)
+        lbl:SetText(text)
+        lbl:SetTextColor(1, 0.82, 0)
+        yOff = yOff - LH - 4
+        return lbl
+    end
+
+    -- Helper: sub-label (grey explanation text)
+    local function SubLabel(text)
+        local lbl = child:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        lbl:SetPoint("TOPLEFT", child, "TOPLEFT", 4, yOff)
+        lbl:SetText(text)
+        lbl:SetTextColor(0.7, 0.7, 0.7)
+        yOff = yOff - LH
+        return lbl
+    end
+
+    -- Helper: wide push-button
+    local function MakeButton(label, w, h)
+        w = w or 140; h = h or 22
+        local btn = CreateFrame("Button", nil, child, "UIPanelButtonTemplate")
+        btn:SetWidth(w); btn:SetHeight(h)
+        btn:SetText(label)
+        return btn
+    end
+
+    -- -----------------------------------------------------------------------
+    -- Section 1: Consumes Bars
+    -- -----------------------------------------------------------------------
+    SectionTitle("Consumes Bars")
+
+    -- EDIT MODE toggle
+    local editBtn = MakeButton(
+        ConsumesManagerBar_IsEditMode and ConsumesManagerBar_IsEditMode()
+            and "Exit Edit Mode" or "Enter Edit Mode", 160)
+    editBtn:SetPoint("TOPLEFT", child, "TOPLEFT", 0, yOff)
+    editBtn:SetScript("OnClick", function()
+        if ConsumesManagerBar_ToggleEditMode then
+            ConsumesManagerBar_ToggleEditMode()
+        end
+        ConsumesManager_UpdateSettingsContent()
     end)
+    yOff = yOff - LH - 2
+    SubLabel("In edit mode: right-click icons to assign them")
+    SubLabel("to a bar. Swap buttons appear between icons.")
+    yOff = yOff - 4
 
-    local scrollChild = CreateFrame("Frame", nil, scrollFrame)
-    scrollChild:SetWidth(WindowWidth - 10)
-    scrollChild:SetHeight(1)
-    scrollFrame:SetScrollChild(scrollChild)
-    parentFrame.scrollChild = scrollChild
-    parentFrame.scrollFrame = scrollFrame
-
-    parentFrame.checkboxes = {}
-    local index = 0
-    local lineHeight = 20
-
-    ConsumesManager_Options["Characters"] = ConsumesManager_Options["Characters"] or {}
-    ConsumesManager_Options.enableCategories = (ConsumesManager_Options.enableCategories == nil) and true or ConsumesManager_Options.enableCategories
-    ConsumesManager_Options.showUseButton = (ConsumesManager_Options.showUseButton == nil) and true or ConsumesManager_Options.showUseButton
-
-    local realmName = GetRealmName()
-    local playerName = UnitName("player")
-    local playerFaction = UnitFactionGroup("player")
-
-    -- Build character list with faction info
-    local characterList = {}
-    if ConsumesManager_Data[realmName] then
-        for characterName, charData in pairs(ConsumesManager_Data[realmName]) do
-            if type(charData) == "table" then
-                table.insert(characterList, {
-                    name = characterName,
-                    faction = charData.faction or "Unknown"
-                })
-            end
+    -- MOUSEOVER MODE checkbox row
+    local moCB = CreateFrame("CheckButton", "ConsumesManager_MouseoverCB", child)
+    moCB:SetWidth(16); moCB:SetHeight(16)
+    moCB:SetPoint("TOPLEFT", child, "TOPLEFT", 0, yOff)
+    moCB:SetNormalTexture("Interface\\Buttons\\UI-CheckBox-Up")
+    moCB:SetPushedTexture("Interface\\Buttons\\UI-CheckBox-Down")
+    moCB:SetHighlightTexture("Interface\\Buttons\\UI-CheckBox-Highlight")
+    moCB:SetCheckedTexture("Interface\\Buttons\\UI-CheckBox-Check")
+    moCB:SetChecked(ConsumesManagerBar_Settings2 and ConsumesManagerBar_Settings2.mouseoverMode)
+    local moLbl = child:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    moLbl:SetPoint("LEFT", moCB, "RIGHT", 4, 0)
+    moLbl:SetText("Mouseover Mode")
+    moCB:SetScript("OnClick", function()
+        if ConsumesManagerBar_ToggleMouseoverMode then
+            ConsumesManagerBar_ToggleMouseoverMode()
         end
-    end
-
-    local playerInList = false
-    for _, charInfo in ipairs(characterList) do
-        if charInfo.name == playerName then
-            playerInList = true
-            break
-        end
-    end
-    if not playerInList then
-        table.insert(characterList, {
-            name = playerName,
-            faction = playerFaction
-        })
-    end
-
-    -- Create faction-specific character lists
-    local allianceCharacters = {}
-    local hordeCharacters = {}
-    
-    for _, charInfo in ipairs(characterList) do
-        if charInfo.faction == "Alliance" then
-            table.insert(allianceCharacters, charInfo)
-        elseif charInfo.faction == "Horde" then
-            table.insert(hordeCharacters, charInfo)
-        else
-            -- For characters with unknown faction, add to both lists
-            table.insert(allianceCharacters, charInfo)
-            table.insert(hordeCharacters, charInfo)
-        end
-    end
-    
-    -- Sort characters by name
-    table.sort(allianceCharacters, function(a, b) return a.name < b.name end)
-    table.sort(hordeCharacters, function(a, b) return a.name < b.name end)
-
-    -- Title
-    local title = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    title:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, 0)
-    title:SetText("Select Characters To Track")
-    title:SetTextColor(1, 1, 1)
-
-    local startYOffset = -20
-    local currentYOffset = startYOffset
-
-    -- Track whether we have characters from each faction
-    local hasAlliance = table.getn(allianceCharacters) > 0
-    local hasHorde = table.getn(hordeCharacters) > 0
-
-    -- First add Alliance section if there are Alliance characters
-    if hasAlliance then
-        -- Alliance Header
-        local allianceHeader = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-        allianceHeader:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, currentYOffset)
-        allianceHeader:SetText("|cff0078ffAlliance Characters:|r")
-        allianceHeader:SetJustifyH("LEFT")
-        currentYOffset = currentYOffset - lineHeight
-
-        -- Alliance Characters
-        for i, charInfo in ipairs(allianceCharacters) do
-            local currentCharacterName = charInfo.name
-            
-            local itemFrame = CreateFrame("Frame", "ConsumesManager_AllianceCharFrame" .. i, scrollChild)
-            itemFrame:SetWidth(WindowWidth - 10)
-            itemFrame:SetHeight(18)
-            itemFrame:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 20, currentYOffset)
-
-            local checkbox = CreateFrame("CheckButton", "ConsumesManager_AllianceCharCheckbox" .. i, itemFrame)
-            checkbox:SetWidth(16)
-            checkbox:SetHeight(16)
-            checkbox:SetPoint("LEFT", itemFrame, "LEFT", 0, 0)
-
-            checkbox:SetNormalTexture("Interface\\Buttons\\UI-CheckBox-Up")
-            checkbox:SetPushedTexture("Interface\\Buttons\\UI-CheckBox-Down")
-            checkbox:SetHighlightTexture("Interface\\Buttons\\UI-CheckBox-Highlight")
-            checkbox:SetCheckedTexture("Interface\\Buttons\\UI-CheckBox-Check")
-
-            local label = itemFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-            label:SetPoint("LEFT", checkbox, "RIGHT", 4, 0)
-            label:SetText(currentCharacterName)
-            label:SetTextColor(0, 0.48, 1) -- Blue for Alliance
-            label:SetJustifyH("LEFT")
-
-            checkbox:SetScript("OnClick", function()
-                ConsumesManager_Options["Characters"][currentCharacterName] = (checkbox:GetChecked() == 1)
-                ConsumesManager_UpdateAllContent()
-            end)
-
-            if ConsumesManager_Options["Characters"][currentCharacterName] == nil then
-                checkbox:SetChecked(true)
-                ConsumesManager_Options["Characters"][currentCharacterName] = true
-            else
-                checkbox:SetChecked(ConsumesManager_Options["Characters"][currentCharacterName] == true)
-            end
-
-            parentFrame.checkboxes[currentCharacterName] = checkbox
-            itemFrame:EnableMouse(true)
-            itemFrame:SetScript("OnMouseDown", function()
-                checkbox:Click()
-            end)
-            
-            currentYOffset = currentYOffset - lineHeight
-            index = index + 1
-        end
-        
-        -- Add extra spacing after Alliance section
-        currentYOffset = currentYOffset - lineHeight / 2
-    end
-
-    -- Then add Horde section if there are Horde characters
-    if hasHorde then
-        -- Horde Header
-        local hordeHeader = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-        hordeHeader:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, currentYOffset)
-        hordeHeader:SetText("|cffb30000Horde Characters:|r")
-        hordeHeader:SetJustifyH("LEFT")
-        currentYOffset = currentYOffset - lineHeight
-
-        -- Horde Characters
-        for i, charInfo in ipairs(hordeCharacters) do
-            local currentCharacterName = charInfo.name
-            
-            local itemFrame = CreateFrame("Frame", "ConsumesManager_HordeCharFrame" .. i, scrollChild)
-            itemFrame:SetWidth(WindowWidth - 10)
-            itemFrame:SetHeight(18)
-            itemFrame:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 20, currentYOffset)
-
-            local checkbox = CreateFrame("CheckButton", "ConsumesManager_HordeCharCheckbox" .. i, itemFrame)
-            checkbox:SetWidth(16)
-            checkbox:SetHeight(16)
-            checkbox:SetPoint("LEFT", itemFrame, "LEFT", 0, 0)
-
-            checkbox:SetNormalTexture("Interface\\Buttons\\UI-CheckBox-Up")
-            checkbox:SetPushedTexture("Interface\\Buttons\\UI-CheckBox-Down")
-            checkbox:SetHighlightTexture("Interface\\Buttons\\UI-CheckBox-Highlight")
-            checkbox:SetCheckedTexture("Interface\\Buttons\\UI-CheckBox-Check")
-
-            local label = itemFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-            label:SetPoint("LEFT", checkbox, "RIGHT", 4, 0)
-            label:SetText(currentCharacterName)
-            label:SetTextColor(0.7, 0, 0) -- Red for Horde
-            label:SetJustifyH("LEFT")
-
-            checkbox:SetScript("OnClick", function()
-                ConsumesManager_Options["Characters"][currentCharacterName] = (checkbox:GetChecked() == 1)
-                ConsumesManager_UpdateAllContent()
-            end)
-
-            if ConsumesManager_Options["Characters"][currentCharacterName] == nil then
-                checkbox:SetChecked(true)
-                ConsumesManager_Options["Characters"][currentCharacterName] = true
-            else
-                checkbox:SetChecked(ConsumesManager_Options["Characters"][currentCharacterName] == true)
-            end
-
-            parentFrame.checkboxes[currentCharacterName] = checkbox
-            itemFrame:EnableMouse(true)
-            itemFrame:SetScript("OnMouseDown", function()
-                checkbox:Click()
-            end)
-            
-            currentYOffset = currentYOffset - lineHeight
-            index = index + 1
-        end
-        
-        -- Add extra spacing after Horde section
-        currentYOffset = currentYOffset - lineHeight / 2
-    end
-
-    -- Ensure we have a good spacing after character lists
-    currentYOffset = currentYOffset - lineHeight / 2
-
-    -- General Settings Title
-    local generalSettingsTitle = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    generalSettingsTitle:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, currentYOffset)
-    generalSettingsTitle:SetText("General Settings")
-    generalSettingsTitle:SetTextColor(1, 1, 1)
-    currentYOffset = currentYOffset - lineHeight
-
-    -- Enable Categories Checkbox
-    local enableCategoriesFrame = CreateFrame("Frame", "ConsumesManager_EnableCategoriesFrame", scrollChild)
-    enableCategoriesFrame:SetWidth(WindowWidth - 10)
-    enableCategoriesFrame:SetHeight(18)
-    enableCategoriesFrame:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, currentYOffset)
-    enableCategoriesFrame:EnableMouse(true)
-
-    local enableCategoriesCheckbox = CreateFrame("CheckButton", "ConsumesManager_EnableCategoriesCheckbox", enableCategoriesFrame)
-    enableCategoriesCheckbox:SetWidth(16)
-    enableCategoriesCheckbox:SetHeight(16)
-    enableCategoriesCheckbox:SetPoint("LEFT", enableCategoriesFrame, "LEFT", 0, 0)
-    enableCategoriesCheckbox:SetNormalTexture("Interface\\Buttons\\UI-CheckBox-Up")
-    enableCategoriesCheckbox:SetPushedTexture("Interface\\Buttons\\UI-CheckBox-Down")
-    enableCategoriesCheckbox:SetHighlightTexture("Interface\\Buttons\\UI-CheckBox-Highlight")
-    enableCategoriesCheckbox:SetCheckedTexture("Interface\\Buttons\\UI-CheckBox-Check")
-    enableCategoriesCheckbox:SetChecked(ConsumesManager_Options.enableCategories)
-
-    enableCategoriesCheckbox:SetScript("OnClick", function()
-        if enableCategoriesCheckbox:GetChecked() then
-            ConsumesManager_Options.enableCategories = true
-        else
-            ConsumesManager_Options.enableCategories = false 
-        end
-        ConsumesManager_UpdateManagerContent()
-        ConsumesManager_UpdatePresetsConsumables()
+        moCB:SetChecked(ConsumesManagerBar_Settings2 and ConsumesManagerBar_Settings2.mouseoverMode)
     end)
+    yOff = yOff - LH
 
-    local enableCategoriesLabel = enableCategoriesFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    enableCategoriesLabel:SetPoint("LEFT", enableCategoriesCheckbox, "RIGHT", 4, 0)
-    enableCategoriesLabel:SetText("Enable Categories")
-    enableCategoriesLabel:SetJustifyH("LEFT")
-    enableCategoriesFrame:SetScript("OnMouseDown", function()
-        enableCategoriesCheckbox:Click()
-    end)
+    -- SCALE: slider on row 1, buttons+editbox on row 2
+    yOff = yOff - 4
+    local scaleLbl = child:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    scaleLbl:SetPoint("TOPLEFT", child, "TOPLEFT", 0, yOff)
+    scaleLbl:SetText("Bar Scale:")
+    yOff = yOff - LH
 
-    currentYOffset = currentYOffset - lineHeight
-
-    -- Show Use Button Checkbox
-    local showUseButtonFrame = CreateFrame("Frame", "ConsumesManager_ShowUseButtonFrame", scrollChild)
-    showUseButtonFrame:SetWidth(WindowWidth - 10)
-    showUseButtonFrame:SetHeight(18)
-    showUseButtonFrame:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, currentYOffset)
-    showUseButtonFrame:EnableMouse(true)
-
-    local showUseButtonCheckbox = CreateFrame("CheckButton", "ConsumesManager_ShowUseButtonCheckbox", showUseButtonFrame)
-    showUseButtonCheckbox:SetWidth(16)
-    showUseButtonCheckbox:SetHeight(16)
-    showUseButtonCheckbox:SetPoint("LEFT", showUseButtonFrame, "LEFT", 0, 0)
-    showUseButtonCheckbox:SetNormalTexture("Interface\\Buttons\\UI-CheckBox-Up")
-    showUseButtonCheckbox:SetPushedTexture("Interface\\Buttons\\UI-CheckBox-Down")
-    showUseButtonCheckbox:SetHighlightTexture("Interface\\Buttons\\UI-CheckBox-Highlight")
-    showUseButtonCheckbox:SetCheckedTexture("Interface\\Buttons\\UI-CheckBox-Check")
-    showUseButtonCheckbox:SetChecked(ConsumesManager_Options.showUseButton)
-
-    showUseButtonCheckbox:SetScript("OnClick", function()
-        if showUseButtonCheckbox:GetChecked() then
-            ConsumesManager_Options.showUseButton = true
-        else
-            ConsumesManager_Options.showUseButton = false 
-        end
-        ConsumesManager_UpdateManagerContent()
-        ConsumesManager_UpdatePresetsConsumables()
-    end)
-
-    local showUseButtonLabel = showUseButtonFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    showUseButtonLabel:SetPoint("LEFT", showUseButtonCheckbox, "RIGHT", 4, 0)
-    showUseButtonLabel:SetText("Show Use Button")
-    showUseButtonLabel:SetJustifyH("LEFT")
-    showUseButtonFrame:SetScript("OnMouseDown", function()
-        showUseButtonCheckbox:Click()
-    end)
-
-    currentYOffset = currentYOffset - lineHeight - 20
-
-    -- Multi-Account Setup
-    local multiAccountTitle = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    multiAccountTitle:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, currentYOffset)
-    multiAccountTitle:SetText("Multi-Account Setup |cffff0000(BETA!)|r")
-    multiAccountTitle:SetTextColor(1, 1, 1)
-    currentYOffset = currentYOffset - lineHeight
-
-    local multiAccountInfo = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    multiAccountInfo:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, currentYOffset)
-    multiAccountInfo:SetText("Set a unique channel name and password. \nRepeat this setup for each of your alt-accounts.")
-    multiAccountInfo:SetJustifyH("LEFT")
-    currentYOffset = currentYOffset - lineHeight * 2
-
-    -- More Info Button
-    local popup = MultiAccountInfoPopup()
-    local MoreInfoBtn = CreateFrame("Button", "ConsumesManager_MoreInfoBtn", scrollChild, "UIPanelButtonTemplate")
-    MoreInfoBtn:SetWidth(70)
-    MoreInfoBtn:SetHeight(20)
-    MoreInfoBtn:SetText("More Info")
-    MoreInfoBtn:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, currentYOffset)
-    MoreInfoBtn:SetScript("OnClick", function()
-        if popup:IsShown() then
-            popup:Hide()
-        else
-            popup:Show()
-        end
-    end)
-    currentYOffset = currentYOffset - lineHeight - 10
-
-    -- Channel Input
-    local channelLabel = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    channelLabel:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, currentYOffset)
-    channelLabel:SetText("Channel:")
-    channelLabel:SetWidth(60)
-    channelLabel:SetJustifyH("LEFT")
-    channelLabel:SetTextColor(1, 1, 1)
-
-    -- Create a frame to hold the editbox so the sub-textures stay aligned
-    local channelFrame = CreateFrame("Frame", nil, scrollChild)
-    channelFrame:SetHeight(20)
-    channelFrame:SetWidth(140)
-    channelFrame:SetPoint("LEFT", channelLabel, "RIGHT", 10, 0)
-
-    local channelEditBox = CreateFrame("EditBox", "ConsumesManager_ChannelEditBox", channelFrame, "InputBoxTemplate")
-    channelEditBox:SetAutoFocus(false)
-    channelEditBox:SetMaxLetters(50)
-    channelEditBox:SetAllPoints(channelFrame) -- Fill the entire holding frame
-
-    local leftTex = getglobal(channelEditBox:GetName().."Left")
-    local midTex  = getglobal(channelEditBox:GetName().."Middle")
-    local rightTex= getglobal(channelEditBox:GetName().."Right")
-
-    -- Anchor them so they move with the EditBox
-    if leftTex then
-        leftTex:ClearAllPoints()
-        leftTex:SetPoint("LEFT", channelEditBox, "LEFT", -5, 0)
+    local function GetScale()
+        return ConsumesManagerBar_Settings2 and
+               (ConsumesManagerBar_Settings2.scale or 1.0) or 1.0
     end
-    if midTex then
-        midTex:ClearAllPoints()
-        midTex:SetPoint("LEFT", leftTex, "RIGHT", 0, 0)
-        midTex:SetPoint("RIGHT", rightTex, "LEFT", 0, 0)
-    end
-    if rightTex then
-        rightTex:ClearAllPoints()
-        rightTex:SetPoint("RIGHT", channelEditBox, "RIGHT", 5, 0)
+    local function ApplyScale(v)
+        v = math.max(0.5, math.min(2.0, v))
+        v = math.floor(v * 100 + 0.5) / 100
+        if ConsumesManagerBar_SetScale then ConsumesManagerBar_SetScale(v) end
     end
 
-    -- Retrieve stored channel
-    local stored_channel = ""
-    if ConsumesManager_Options.Channel and ConsumesManager_Options.Channel ~= "" then
-        stored_channel = DecodeMessage(ConsumesManager_Options.Channel)
-    end
-    channelEditBox:SetText(stored_channel)
-    currentYOffset = currentYOffset - lineHeight
-
-    -- Password Input
-    local passwordLabel = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    passwordLabel:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, currentYOffset)
-    passwordLabel:SetText("Password:")
-    passwordLabel:SetWidth(60)
-    passwordLabel:SetJustifyH("LEFT")
-    passwordLabel:SetTextColor(1, 1, 1)
-
-    -- Same holding frame approach
-    local passwordFrame = CreateFrame("Frame", nil, scrollChild)
-    passwordFrame:SetHeight(20)
-    passwordFrame:SetWidth(140)
-    passwordFrame:SetPoint("LEFT", passwordLabel, "RIGHT", 10, 0)
-
-    local passwordEditBox = CreateFrame("EditBox", "ConsumesManager_PasswordEditBox", passwordFrame, "InputBoxTemplate")
-    passwordEditBox:SetAutoFocus(false)
-    passwordEditBox:SetMaxLetters(50)
-    passwordEditBox:SetAllPoints(passwordFrame)
-
-    local pLeft = getglobal(passwordEditBox:GetName().."Left")
-    local pMid  = getglobal(passwordEditBox:GetName().."Middle")
-    local pRight= getglobal(passwordEditBox:GetName().."Right")
-
-    if pLeft then
-        pLeft:ClearAllPoints()
-        pLeft:SetPoint("LEFT", passwordEditBox, "LEFT", -5, 0)
-    end
-    if pMid then
-        pMid:ClearAllPoints()
-        pMid:SetPoint("LEFT", pLeft, "RIGHT", 0, 0)
-        pMid:SetPoint("RIGHT", pRight, "LEFT", 0, 0)
-    end
-    if pRight then
-        pRight:ClearAllPoints()
-        pRight:SetPoint("RIGHT", passwordEditBox, "RIGHT", 5, 0)
-    end
-
-    local stored_password = ""
-    if ConsumesManager_Options.Password and ConsumesManager_Options.Password ~= "" then
-        stored_password = DecodeMessage(ConsumesManager_Options.Password)
-    end
-    passwordEditBox:SetText(stored_password)
-    currentYOffset = currentYOffset - lineHeight - 10
-
-    -- Join and Leave Channel Buttons
-    joinChannelButton = CreateFrame("Button", "ConsumesManager_JoinChannelButton", scrollChild, "UIPanelButtonTemplate")
-    joinChannelButton:SetWidth(140)
-    joinChannelButton:SetHeight(24)
-    joinChannelButton:SetText("Save & Join Channel")
-    joinChannelButton:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, currentYOffset)
-
-    LeaveChannelButton = CreateFrame("Button", "ConsumesManager_LeaveChannelButton", scrollChild, "UIPanelButtonTemplate")
-    LeaveChannelButton:SetWidth(140)
-    LeaveChannelButton:SetHeight(24)
-    LeaveChannelButton:SetText("Leave Channel")
-    LeaveChannelButton:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 140, currentYOffset)
-
-    -- Function to Update Leave Button State
-    local function UpdateLeaveButtonState()
-        if ConsumesManager_Options.Channel == "" or ConsumesManager_Options.Channel == nil then
-            LeaveChannelButton:Disable()
-            LeaveChannelButton:SetAlpha(0.5)
-            channelEditBox:SetText("")
-            passwordEditBox:SetText("")
-        else
-            LeaveChannelButton:Enable()
-            LeaveChannelButton:SetAlpha(1)
-        end
-    end
-
-    UpdateLeaveButtonState()
-
-    -- Leave Channel Button Script
-    LeaveChannelButton:SetScript("OnClick", function()
-        if ConsumesManager_Options.Channel == "" or ConsumesManager_Options.Channel == nil then
-            UpdateLeaveButtonState()
-            updateSenDataButtonState()
-        else
-            local decoded_channel = DecodeMessage(ConsumesManager_Options.Channel)
-            DEFAULT_CHAT_FRAME:AddMessage("|cffffffff" .. GetAddOnMetadata("ConsumesManager", "Title") .. ":|r |cffffffffYou left|r |cffffc0c0[" .. decoded_channel .. "]|r|cffffffff. Multi-account sync |cffff0000disabled|r|cffffffff.|r")
-            LeaveChannelByName(decoded_channel)
-            ConsumesManager_Options.Channel = nil
-            ConsumesManager_Options.Password = nil
-            UpdateLeaveButtonState()
-            updateSenDataButtonState()
-        end
-    end)
-
-    -- Channel Error Message
-    local channelErrorMessage = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    channelErrorMessage:SetPoint("TOPLEFT", joinChannelButton, "BOTTOMLEFT", 0, -5)
-    channelErrorMessage:SetTextColor(1, 0, 0)
-    channelErrorMessage:SetText("Failed to join channel. Read chat for more info.")
-    channelErrorMessage:Hide()
-    currentYOffset = currentYOffset - lineHeight - 30
-
-    -- Function to Update Join Button State
-    local function UpdateJoinButtonState()
-        local ctext = channelEditBox:GetText()
-        local ptext = passwordEditBox:GetText()
-        if ctext ~= "" and ptext ~= "" then
-            joinChannelButton:Enable()
-            joinChannelButton:SetAlpha(1)
-        else
-            joinChannelButton:Disable()
-            joinChannelButton:SetAlpha(0.5)
-        end
-    end
-
-    channelEditBox:SetScript("OnTextChanged", UpdateJoinButtonState)
-    passwordEditBox:SetScript("OnTextChanged", UpdateJoinButtonState)
-
-    UpdateJoinButtonState()
-
-    -- Function to Handle Channel Join Failures
-    function ConsumesManager_ChannelJoinFailed(error_message)
-        ConsumesManager_Options.Channel = nil
-        ConsumesManager_Options.Password = nil
-        channelEditBox:SetText("")
-        passwordEditBox:SetText("")
-        UpdateJoinButtonState()
-        channelErrorMessage:Show()
-        channelErrorMessage:SetText(error_message)
-    end
-
-    -- Danger Zone Title
-    local DangerZonTitle = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    DangerZonTitle:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, currentYOffset)
-    DangerZonTitle:SetText("Danger Zone")
-    DangerZonTitle:SetTextColor(1, 1, 1)
-    currentYOffset = currentYOffset - lineHeight * 2
-
-    -- Reset Addon Button
-    resetButton = CreateFrame("Button", "ConsumesManager_ResetButton", scrollChild, "UIPanelButtonTemplate")
-    resetButton:SetWidth(120)
-    resetButton:SetHeight(24)
-    resetButton:SetText("Reset Addon")
-    resetButton:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, currentYOffset)
-    resetButton:SetScript("OnClick", function()
-        if ConsumesManager_Options.Channel then 
-            local decoded_channel = DecodeMessage(ConsumesManager_Options.Channel)
-            LeaveChannelByName(decoded_channel)
-        end
-        ConsumesManager_Options = {}
-        ConsumesManager_SelectedItems = {}
-        ConsumesManager_Data = {}
-        ReloadUI()
-    end)
-
-    -- Set the scroll child height to accommodate all content
-    scrollChild.contentHeight = math.abs(startYOffset - currentYOffset) + 100
-    scrollChild:SetHeight(scrollChild.contentHeight)
-
-    -- Scroll Bar Setup
-    local scrollBar = CreateFrame("Slider", "ConsumesManager_SettingsScrollBar", parentFrame)
-    scrollBar:SetPoint("TOPRIGHT", parentFrame, "TOPRIGHT", -2, -16)
-    scrollBar:SetPoint("BOTTOMRIGHT", parentFrame, "BOTTOMRIGHT", -2, 16)
-    scrollBar:SetWidth(16)
-    scrollBar:SetOrientation('VERTICAL')
-    scrollBar:SetThumbTexture("Interface\\Buttons\\UI-ScrollBar-Knob")
-    scrollBar:SetBackdrop({
-        bgFile = "Interface\\Buttons\\UI-SliderBar-Background",
+    -- Row 1: slider (leave room for the 20px scrollbar on the right)
+    local sliderW = WindowWidth - 90
+    local slider = CreateFrame("Slider", "ConsumesManager_ScaleSlider", child)
+    slider:SetWidth(sliderW)
+    slider:SetHeight(16)
+    slider:SetPoint("TOPLEFT", child, "TOPLEFT", 2, yOff)
+    slider:SetOrientation("HORIZONTAL")
+    slider:SetMinMaxValues(50, 200)
+    slider:SetValueStep(1)
+    slider:SetValue(math.floor(GetScale() * 100 + 0.5))
+    slider:SetThumbTexture("Interface\\Buttons\\UI-ScrollBar-Knob")
+    slider:SetBackdrop({
+        bgFile   = "Interface\\Buttons\\UI-SliderBar-Background",
         edgeFile = "Interface\\Buttons\\UI-SliderBar-Border",
         tile = true, tileSize = 8, edgeSize = 8,
         insets = { left = 3, right = 3, top = 3, bottom = 3 }
     })
-    scrollBar:SetScript("OnValueChanged", function()
-        local value = this:GetValue()
-        scrollFrame:SetVerticalScroll(value)
-    end)
-    parentFrame.scrollBar = scrollBar
+    yOff = yOff - 20
 
-    ConsumesManager_UpdateSettingsScrollBar()
+    -- Row 2: << < [editbox] > >>
+    local btnMM = MakeButton("<<", 28, 18)
+    btnMM:SetPoint("TOPLEFT", child, "TOPLEFT", 0, yOff)
 
-    if not ConsumesManager_ChannelFrame then
-        ConsumesManager_ChannelFrame = CreateFrame("Frame", "ConsumesManager_ChannelFrame")
+    local btnM = MakeButton("<", 26, 18)
+    btnM:SetPoint("LEFT", btnMM, "RIGHT", 2, 0)
+
+    -- Named editbox so InputBoxTemplate sub-textures can be repositioned
+    local scaleEB = CreateFrame("EditBox", "ConsumesManager_ScaleEditBox", child, "InputBoxTemplate")
+    scaleEB:SetWidth(42)
+    scaleEB:SetHeight(18)
+    scaleEB:SetPoint("LEFT", btnM, "RIGHT", 4, 0)
+    scaleEB:SetAutoFocus(false)
+    scaleEB:SetMaxLetters(5)
+    scaleEB:SetNumeric(false)
+    scaleEB:SetText(string.format("%.2f", GetScale()))
+    -- Fix sub-texture positioning for named editbox
+    local ebL = getglobal("ConsumesManager_ScaleEditBoxLeft")
+    local ebM = getglobal("ConsumesManager_ScaleEditBoxMiddle")
+    local ebR = getglobal("ConsumesManager_ScaleEditBoxRight")
+    if ebL then ebL:ClearAllPoints(); ebL:SetPoint("LEFT", scaleEB, "LEFT", -5, 0) end
+    if ebR then ebR:ClearAllPoints(); ebR:SetPoint("RIGHT", scaleEB, "RIGHT", 5, 0) end
+    if ebM then
+        ebM:ClearAllPoints()
+        ebM:SetPoint("LEFT",  ebL or scaleEB, "RIGHT", 0, 0)
+        ebM:SetPoint("RIGHT", ebR or scaleEB, "LEFT",  0, 0)
     end
 
-    local channelmsg = ""
+    local btnP = MakeButton(">", 26, 18)
+    btnP:SetPoint("LEFT", scaleEB, "RIGHT", 4, 0)
 
-    joinChannelButton:SetScript("OnClick", function()
+    local btnPP = MakeButton(">>", 28, 18)
+    btnPP:SetPoint("LEFT", btnP, "RIGHT", 2, 0)
 
-        ConsumesManager_ChannelFrame:RegisterEvent("CHAT_MSG_CHANNEL_NOTICE")
+    -- Sync helpers
+    local function UpdateScaleDisplay(v)
+        slider:SetValue(math.floor(v * 100 + 0.5))
+        scaleEB:SetText(string.format("%.2f", v))
+    end
 
-        channelErrorMessage:Hide()
-        local ctext = channelEditBox:GetText()
-        local ptext = passwordEditBox:GetText()
-        local final_result = nil
-        local try_again = false
-
-         ConsumesManager_ChannelFrame:SetScript("OnEvent", function()
-            local noticeType = string.upper(arg1 or "")
-            local channelName = string.upper(arg9 or "")
-            local inputChannelName = string.upper(ctext or "")
-
-            if noticeType == "WRONG_PASSWORD" and channelName == inputChannelName then
-                channelmsg = "WRONG_PASSWORD"
-                --DEFAULT_CHAT_FRAME:AddMessage(noticeType)
-            elseif noticeType == "NOT_MODERATOR" and channelName == inputChannelName then
-                channelmsg = "NOT_MODERATOR"
-                --DEFAULT_CHAT_FRAME:AddMessage(noticeType)
-            elseif noticeType == "YOU_JOINED" and channelName == inputChannelName then
-                channelmsg = "YOU_JOINED"
-                --DEFAULT_CHAT_FRAME:AddMessage(noticeType)
-            end
-
-        end)
-
-
-        -- Don't join same channel
-        if ConsumesManager_Options.Channel then
-            if DecodeMessage(ConsumesManager_Options.Channel) == ctext then
-                channelErrorMessage:SetText("Already in this channel")
-                channelErrorMessage:Show()
-                return
-            end
-        end
-
-        -- Block attempts to join big system channels
-        local blocked = { "world", "general", "localdefense", "hardcore", "lft", "trade" }
-        local lowerChannel = string.lower(ctext)
-        for _, b in pairs(blocked) do
-            if lowerChannel == b then
-                ConsumesManager_ChannelJoinFailed("You cannot use a global channel")
-                return
-            end
-        end
-
-        JoinChannelByName(ctext, ptext)
-
-        joinChannelButton:SetText("Connecting... (4)")
-        joinChannelButton:Disable()
-        joinChannelButton:SetAlpha(0.5)
-
-
-        local delayFrame = CreateFrame("Frame")
-        delayFrame:Show()
-        local elapsed = 0
-        local delay = 5
-        local one_attempt = 0
-
-        delayFrame:SetScript("OnUpdate", function()
-            
-
-            if elapsed > 1 and elapsed < 2 then
-
-                joinChannelButton:SetText("Connecting... (3)")
-
-                if one_attempt == 0 then
-
-                    DEFAULT_CHAT_FRAME:AddMessage("message: " .. channelmsg)
-
-                    if channelmsg == "WRONG_PASSWORD" then
-                        final_result = "WRONG_PASSWORD"
-                    elseif channelmsg == "YOU_JOINED" then
-                        DEFAULT_CHAT_FRAME:AddMessage("setting password")
-                        SetChannelPassword(ctext, ptext)
-                    end
-                end
-
-                one_attempt = 1
-
-
-            elseif elapsed > 2 and elapsed < 3 then
-                joinChannelButton:SetText("Connecting... (2)")
-
-
-                if one_attempt == 1 then
-
-                    DEFAULT_CHAT_FRAME:AddMessage("message: " .. channelmsg)
-
-                    if channelmsg == "YOU_JOINED" then
-                        final_result = "SUCCESS"
-                    elseif channelmsg == "NOT_MODERATOR" then
-                        LeaveChannelByName(ctext)
-                        try_again = true
-                    end
-                end
-
-                one_attempt = 2
-
-
-
-            elseif elapsed > 3 and elapsed < 4 then
-                joinChannelButton:SetText("Connecting... (1)")
-
-                if one_attempt == 2 then
-
-                    DEFAULT_CHAT_FRAME:AddMessage("message: " .. channelmsg)
-
-                    if try_again == true then
-
-                        JoinChannelByName(ctext, ptext)
-
-                    end
-                 end
-
-                one_attempt = 3
-
-            elseif elapsed > 4 and elapsed < 5 then
-                joinChannelButton:SetText("Connecting... (0)")
-
-                if one_attempt == 3 then
-
-                    DEFAULT_CHAT_FRAME:AddMessage("message: " .. channelmsg)
-
-                    if try_again == true then
-
-                        if channelmsg == "YOU_JOINED" then
-                            final_result = "SUCCESS"
-                        elseif channelmsg == "NOT_MODERATOR" then
-                            final_result = "NOT_MODERATOR"
-                        end
-                    end
-                 end
-
-                one_attempt = 4
-
-            end
-
-
-
-            elapsed = elapsed + arg1
-
-            if elapsed >= delay then
-
-                delayFrame:SetScript("OnUpdate", nil)
-                delayFrame:Hide()
-
-
-                -- ACTION AFTER 3 SECONDS
-
-
-                if final_result == "SUCCESS" then
-
-                    ConsumesManager_Options.Channel = EncodeMessage(ctext)
-                    ConsumesManager_Options.Password = EncodeMessage(ptext)
-
-                    DEFAULT_CHAT_FRAME:AddMessage("|cffffffff" .. GetAddOnMetadata("ConsumesManager", "Title") ..
-                    ":|r |cffffffffYou joined|r |cffffc0c0[" .. ctext ..
-                    "]|r|cffffffff. Multi-account sync |cff00ff00enabled|r|cffffffff.|r")
-
-                elseif final_result == "WRONG_PASSWORD" then
-
-                    ConsumesManager_ChannelJoinFailed("Wrong password. Try again.")
-
-                    DEFAULT_CHAT_FRAME:AddMessage("|cffffffff" .. GetAddOnMetadata("ConsumesManager", "Title") ..
-                    ":|r |cffffffffWrong password for|r |cffffc0c0[" .. ctext ..
-                    "]|r|cffffffff. Multi-account sync |cffff0000disabled|r|cffffffff.|r")
-
-                elseif final_result == "NOT_MODERATOR" then
-
-                    ConsumesManager_ChannelJoinFailed("This is not your channel.")
-                    DEFAULT_CHAT_FRAME:AddMessage("|cffffffff" .. GetAddOnMetadata("ConsumesManager", "Title") ..
-                    ":|r |cffffffffYou don't own|r |cffffc0c0[" .. ctext ..
-                    "]|r|cffffffff. Multi-account sync |cffff0000disabled|r|cffffffff.|r")
-
-                else
-                    LeaveChannelByName(ctext)
-                    ConsumesManager_ChannelJoinFailed("Unknown error")
-                    DEFAULT_CHAT_FRAME:AddMessage("|cffffffff" .. GetAddOnMetadata("ConsumesManager", "Title") ..
-                    ":|r |cffffffffFailed to join|r |cffffc0c0[" .. ctext ..
-                    "]|r|cffffffff. Multi-account sync |cffff0000disabled|r|cffffffff.|r")
-                end
-
-                joinChannelButton:SetText("Save & Join Channel")
-                joinChannelButton:Enable()
-                joinChannelButton:SetAlpha(1)
-                updateSenDataButtonState()
-                UpdateLeaveButtonState()
-
-                ConsumesManager_ChannelFrame:UnregisterEvent("CHAT_MSG_CHANNEL_NOTICE")
-
-            end
-            delayFrame:Show()
-        end)
+    slider:SetScript("OnValueChanged", function()
+        local v = this:GetValue() / 100
+        ApplyScale(v)
+        scaleEB:SetText(string.format("%.2f", GetScale()))
     end)
-end
+    btnMM:SetScript("OnClick", function()
+        ApplyScale(GetScale() - 0.10); UpdateScaleDisplay(GetScale())
+    end)
+    btnM:SetScript("OnClick", function()
+        ApplyScale(GetScale() - 0.01); UpdateScaleDisplay(GetScale())
+    end)
+    btnP:SetScript("OnClick", function()
+        ApplyScale(GetScale() + 0.01); UpdateScaleDisplay(GetScale())
+    end)
+    btnPP:SetScript("OnClick", function()
+        ApplyScale(GetScale() + 0.10); UpdateScaleDisplay(GetScale())
+    end)
+    scaleEB:SetScript("OnEnterPressed", function()
+        local v = tonumber(this:GetText())
+        if v then ApplyScale(v) end
+        UpdateScaleDisplay(GetScale())
+        this:ClearFocus()
+    end)
+    scaleEB:SetScript("OnEscapePressed", function()
+        this:SetText(string.format("%.2f", GetScale()))
+        this:ClearFocus()
+    end)
+    scaleEB:SetScript("OnEditFocusLost", function()
+        local v = tonumber(this:GetText())
+        if v then ApplyScale(v) end
+        this:SetText(string.format("%.2f", GetScale()))
+    end)
 
+    yOff = yOff - LH - 4
+
+    -- RESET POSITIONS
+    yOff = yOff - 4
+    local resetPosBtn = MakeButton("Reset Bar Positions", 160)
+    resetPosBtn:SetPoint("TOPLEFT", child, "TOPLEFT", 0, yOff)
+    resetPosBtn:SetScript("OnClick", function()
+        SlashCmdList["CONSUMESBARRESET"]("")
+    end)
+    yOff = yOff - LH - 4
+
+    -- -----------------------------------------------------------------------
+    -- Section 2: Bar Management
+    -- -----------------------------------------------------------------------
+    yOff = yOff - 8
+    SectionTitle("Bar Management")
+    SubLabel("Rename or delete bars. First bar cannot be deleted.")
+
+    -- ADD BAR button at the top so it never scrolls off screen
+    local addBarBtn = MakeButton("+ Add Bar", 120)
+    addBarBtn:SetPoint("TOPLEFT", child, "TOPLEFT", 0, yOff)
+    addBarBtn:SetScript("OnClick", function()
+        if ConsumesManagerBar_AddBar then
+            ConsumesManagerBar_AddBar()
+        end
+        ConsumesManager_UpdateSettingsContent()
+    end)
+    yOff = yOff - LH - 4
+
+    -- Render current bars list (rebuilt each time settings is refreshed)
+    local barEditBoxCounter = 0
+    local function RenderBarsList()
+        if not ConsumesManagerBar_Settings2 then return end
+        local bars = ConsumesManagerBar_Settings2.bars
+        if not bars then return end
+
+        for _, bar in ipairs(bars) do
+            local captureBar = bar
+            barEditBoxCounter = barEditBoxCounter + 1
+            local ebName = "ConsumesManager_BarNameEB" .. barEditBoxCounter
+
+            local ebFrame = CreateFrame("Frame", nil, child)
+            ebFrame:SetHeight(22)
+            ebFrame:SetWidth(160)
+            ebFrame:SetPoint("TOPLEFT", child, "TOPLEFT", 0, yOff)
+
+            local eb = CreateFrame("EditBox", ebName, ebFrame, "InputBoxTemplate")
+            eb:SetAutoFocus(false)
+            eb:SetMaxLetters(32)
+            eb:SetAllPoints(ebFrame)
+            eb:SetText(captureBar.name or captureBar.id)
+
+            -- Reposition InputBoxTemplate sub-textures
+            local eL = getglobal(ebName .. "Left")
+            local eM = getglobal(ebName .. "Middle")
+            local eR = getglobal(ebName .. "Right")
+            if eL then eL:ClearAllPoints(); eL:SetPoint("LEFT",  eb, "LEFT",  -5, 0) end
+            if eR then eR:ClearAllPoints(); eR:SetPoint("RIGHT", eb, "RIGHT",  5, 0) end
+            if eM then
+                eM:ClearAllPoints()
+                eM:SetPoint("LEFT",  eL or eb, "RIGHT", 0, 0)
+                eM:SetPoint("RIGHT", eR or eb, "LEFT",  0, 0)
+            end
+
+            local function CommitRename()
+                local newName = eb:GetText()
+                if newName and newName ~= "" then
+                    if ConsumesManagerBar_RenameBar then
+                        ConsumesManagerBar_RenameBar(captureBar.id, newName)
+                        captureBar.name = newName
+                    end
+                else
+                    eb:SetText(captureBar.name or captureBar.id)
+                end
+            end
+
+            eb:SetScript("OnEnterPressed", function()
+                CommitRename(); this:ClearFocus()
+            end)
+            eb:SetScript("OnEditFocusLost", CommitRename)
+            eb:SetScript("OnEscapePressed", function()
+                this:SetText(captureBar.name or captureBar.id)
+                this:ClearFocus()
+            end)
+
+            -- Delete button (disabled for bar 1)
+            local delBtn = MakeButton("Delete", 60, 20)
+            delBtn:SetPoint("LEFT", ebFrame, "RIGHT", 6, 0)
+            if captureBar.id == bars[1].id then
+                delBtn:Disable()
+                delBtn:SetAlpha(0.4)
+            else
+                delBtn:SetScript("OnClick", function()
+                    if ConsumesManagerBar_DeleteBar then
+                        ConsumesManagerBar_DeleteBar(captureBar.id)
+                    end
+                    ConsumesManager_UpdateSettingsContent()
+                end)
+            end
+
+            -- Show/hide checkbox
+            local visCB = CreateFrame("CheckButton", nil, child)
+            visCB:SetWidth(20); visCB:SetHeight(20)
+            visCB:SetPoint("LEFT", delBtn, "RIGHT", 6, 0)
+            visCB:SetNormalTexture("Interface\\Buttons\\UI-CheckBox-Up")
+            visCB:SetPushedTexture("Interface\\Buttons\\UI-CheckBox-Down")
+            visCB:SetHighlightTexture("Interface\\Buttons\\UI-CheckBox-Highlight")
+            visCB:SetCheckedTexture("Interface\\Buttons\\UI-CheckBox-Check")
+            -- Checked = visible (not hidden)
+            local isHidden = ConsumesManagerBar_IsBarHidden and ConsumesManagerBar_IsBarHidden(captureBar.id)
+            visCB:SetChecked(not isHidden)
+            local visLbl = child:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            visLbl:SetPoint("LEFT", visCB, "RIGHT", 2, 0)
+            visLbl:SetText("Show")
+            visLbl:SetTextColor(0.8, 0.8, 0.8)
+            visCB:SetScript("OnClick", function()
+                local nowChecked = this:GetChecked()
+                if ConsumesManagerBar_SetBarHidden then
+                    ConsumesManagerBar_SetBarHidden(captureBar.id, not nowChecked)
+                end
+            end)
+
+            yOff = yOff - LH
+        end  -- for _, bar in ipairs(bars)
+    end  -- function RenderBarsList
+
+    RenderBarsList()
+
+    -- -----------------------------------------------------------------------
+    -- Finish scroll area
+    -- -----------------------------------------------------------------------
+    local startY     = -8
+    child.contentHeight = math.abs(startY - yOff) + 40
+    child:SetHeight(child.contentHeight)
+end
 function ConsumesManager_UpdateSettingsContent()
     local parentFrame = ConsumesManager_MainFrame and ConsumesManager_MainFrame.tabs and ConsumesManager_MainFrame.tabs[4]
-    if not parentFrame or not parentFrame.scrollFrame then
-        return
+    if not parentFrame then return end
+
+    -- First-time setup: create scrollFrame and scrollBar if not yet created
+    if not parentFrame.scrollFrame then
+        local sf = CreateFrame("ScrollFrame", "ConsumesManager_SettingsScrollFrame", parentFrame)
+        sf:SetPoint("TOPLEFT",     parentFrame, "TOPLEFT",      0,  0)
+        sf:SetPoint("BOTTOMRIGHT", parentFrame, "BOTTOMRIGHT", -20, 0)
+        sf:EnableMouseWheel(true)
+        sf:SetScript("OnMouseWheel", function()
+            local delta = arg1
+            local cur   = this:GetVerticalScroll()
+            local maxS  = this.maxScroll or 0
+            local newS  = math.max(0, math.min(cur - delta * 20, maxS))
+            this:SetVerticalScroll(newS)
+            if parentFrame.scrollBar then parentFrame.scrollBar:SetValue(newS) end
+        end)
+        parentFrame.scrollFrame = sf
     end
 
-    -- Remove existing child
+    if not parentFrame.scrollBar then
+        local sb = CreateFrame("Slider", "ConsumesManager_SettingsScrollBar", parentFrame)
+        sb:SetPoint("TOPRIGHT",    parentFrame, "TOPRIGHT",    -2, -4)
+        sb:SetPoint("BOTTOMRIGHT", parentFrame, "BOTTOMRIGHT", -2,  4)
+        sb:SetWidth(16)
+        sb:SetOrientation("VERTICAL")
+        sb:SetThumbTexture("Interface\\Buttons\\UI-ScrollBar-Knob")
+        sb:SetBackdrop({
+            bgFile   = "Interface\\Buttons\\UI-SliderBar-Background",
+            edgeFile = "Interface\\Buttons\\UI-SliderBar-Border",
+            tile = true, tileSize = 8, edgeSize = 8,
+            insets = { left = 3, right = 3, top = 3, bottom = 3 }
+        })
+        sb:SetScript("OnValueChanged", function()
+            if parentFrame.scrollFrame then
+                parentFrame.scrollFrame:SetVerticalScroll(this:GetValue())
+            end
+        end)
+        parentFrame.scrollBar = sb
+    end
+
+    -- Discard the old scroll child and build a fresh one
     local oldChild = parentFrame.scrollFrame:GetScrollChild()
     if oldChild then
         oldChild:Hide()
@@ -3159,41 +2767,33 @@ function ConsumesManager_UpdateSettingsContent()
         parentFrame.scrollFrame:SetScrollChild(nil)
     end
 
-    -- Remove old scrollbar
-    if parentFrame.scrollBar then
-        parentFrame.scrollBar:Hide()
-        parentFrame.scrollBar:SetParent(nil)
-        parentFrame.scrollBar = nil
-    end
+    local newChild = CreateFrame("Frame", nil, parentFrame.scrollFrame)
+    newChild:SetWidth(WindowWidth - 30)
+    newChild:SetHeight(1)
+    newChild.contentHeight = 0
+    parentFrame.scrollFrame:SetScrollChild(newChild)
+    parentFrame.scrollChild = newChild
 
-    -- New scroll child
-    local newScrollChild = CreateFrame("Frame", nil, parentFrame.scrollFrame)
-    newScrollChild:SetWidth(WindowWidth - 10)
-    newScrollChild:SetHeight(1)
-    newScrollChild.contentHeight = 0
-    parentFrame.scrollFrame:SetScrollChild(newScrollChild)
-    parentFrame.scrollChild = newScrollChild
-
-    -- Build content
+    -- Build content into newChild
     ConsumesManager_CreateSettingsContent(parentFrame)
 
-    -- Reset scroll
-    if parentFrame.scrollBar then
-        parentFrame.scrollBar:SetValue(0)
-    end
+    -- Reset scroll position
+    parentFrame.scrollFrame:SetVerticalScroll(0)
+    parentFrame.scrollBar:SetValue(0)
+
+    ConsumesManager_UpdateSettingsScrollBar()
 end
 
 function ConsumesManager_UpdateSettingsScrollBar()
     local OptionsFrame = ConsumesManager_MainFrame and ConsumesManager_MainFrame.tabs and ConsumesManager_MainFrame.tabs[4]
-    if not OptionsFrame then
-        return
-    end
-    local scrollBar = OptionsFrame.scrollBar
+    if not OptionsFrame then return end
+    local scrollBar   = OptionsFrame.scrollBar
     local scrollFrame = OptionsFrame.scrollFrame
     local scrollChild = OptionsFrame.scrollChild
+    if not scrollBar or not scrollFrame or not scrollChild then return end
 
-    local totalHeight = scrollChild.contentHeight
-    local shownHeight = 420
+    local totalHeight = scrollChild.contentHeight or 0
+    local shownHeight = scrollFrame:GetHeight() or 380
 
     local maxScroll = math.max(0, totalHeight - shownHeight)
     scrollFrame.maxScroll = maxScroll
@@ -3560,7 +3160,7 @@ function ConsumesManager_ShowConsumableTooltip(itemID)
     -- Collect data for each character
     for character, charData in pairs(ConsumesManager_Data[realmName]) do
         -- Make sure it's a character data table and not metadata
-        if type(charData) == "table" and ConsumesManager_Options["Characters"][character] == true then
+        if type(charData) == "table" and ConsumesManager_Options["Characters"] and ConsumesManager_Options["Characters"][character] == true then
             -- Get faction info for display
             local charFaction = charData.faction or "Unknown"
             local inventory = charData["inventory"] and charData["inventory"][itemID] or 0
@@ -4436,4 +4036,3 @@ end
         end
         return table.concat(decoded, "")
     end
-

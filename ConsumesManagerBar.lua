@@ -1,162 +1,162 @@
 -- ConsumesManagerBar - Companion addon for ConsumesManager
--- Provides a floating horizontal bar with clickable consumable icons
+-- Unlimited named floating bars. Right-click icons in edit mode to assign to a bar.
+-- Left/right arrows reorder within a bar.
 
 ConsumesManagerBar = {}
 
--- Configuration with scaling support
-local BAR_HEIGHT = 40
-local ICON_SIZE = 32
-local ICON_SPACING = 5
--- Removed MAX_ICONS limit - bar will expand to fit all tracked items
+-- Base dimensions (scaled at runtime)
+local BAR_HEIGHT    = 40
+local ICON_SIZE     = 32
+local ICON_SPACING  = 5
 
--- Edit mode state
-local editMode = false
-local iconVisibility = {} -- Stores which icons should be HIDDEN (true = hidden)
+-- Runtime state
+local editMode      = false
+local mouseoverMode = false
+local mouseoverVisible = false
 
--- Main frames
-local barFrame
-local disabledBarFrame
+-- barFrames[barID] = WoW Frame object
+local barFrames = {}
 
--- Saved variables (UPDATED VARIABLE NAME)
+-- Saved variables (loaded from disk by WoW)
 ConsumesManagerBar_Settings2 = {}
 
 -- Buff tracking
-local buffedItems = {} -- Track which items are currently buffed (now stores count: 1 for regular buffs, 1-2 for weapon enchants)
-local buffTimes = {} -- Track remaining time for buffs in seconds
+local buffedItems = {}
+local buffTimes   = {}
 
--- Texture cache for dynamic texture loading
+-- Texture cache
 local itemTextureCache = {}
 
--- Animation tracking for pulsing timers
-local pulsingTimers = {} -- Track which icons should pulse: pulsingTimers[itemID] = {frame = iconFrame, lastUpdate = 0, direction = 1}
+-- Pulse animation
+local pulsingTimers   = {}
 local lastPulseUpdate = 0
 
--- Custom priority tracking
-local customPriorities = {} -- itemID -> custom priority value (lower = higher priority)
-local draggingItem = nil -- Item being dragged for reordering
-local dragStartIndex = 0
+-- Per-item ordering override (itemID -> numeric priority)
+local customPriorities = {}
 
--- Glow effect tracking for missing buffs
-local glowingIcons = {} -- itemID -> {frame = iconFrame, overlay = glowOverlay}
+-- Glow
+local glowingIcons  = {}
+local glowReminders = {}
 
--- Glow reminder settings
-local glowReminders = {} -- itemID -> boolean (nil = default enabled, false = disabled, true = enabled)
+-- Shared context-menu frame (created once, reused)
+local contextMenuFrame = nil
 
--- Helper function to check if DoiteGlow is available
+-- ============================================================
+-- BAR DATA ACCESSORS  (all bar metadata lives in Settings2)
+-- ============================================================
+
+local function GetBars()
+    -- Ensure at least one bar always exists
+    if not ConsumesManagerBar_Settings2.bars or
+       table.getn(ConsumesManagerBar_Settings2.bars) == 0 then
+        ConsumesManagerBar_Settings2.bars = {
+            { id = "bar1", name = "Bar 1" }
+        }
+    end
+    return ConsumesManagerBar_Settings2.bars
+end
+
+-- Returns the barID an item belongs to, defaulting to the first bar
+local function GetItemBarID(itemID)
+    local assigned = ConsumesManagerBar_Settings2.itemBar and
+                     ConsumesManagerBar_Settings2.itemBar[itemID]
+    if assigned then
+        -- Validate the bar still exists
+        for _, bar in ipairs(GetBars()) do
+            if bar.id == assigned then return assigned end
+        end
+    end
+    return GetBars()[1].id
+end
+
+-- Assigns an item to a bar (nil-stores when it's the default bar to save space)
+local function SetItemBarID(itemID, barID)
+    if not ConsumesManagerBar_Settings2.itemBar then
+        ConsumesManagerBar_Settings2.itemBar = {}
+    end
+    if barID == GetBars()[1].id then
+        ConsumesManagerBar_Settings2.itemBar[itemID] = nil
+    else
+        ConsumesManagerBar_Settings2.itemBar[itemID] = barID
+    end
+end
+
+-- ============================================================
+-- GLOW EFFECTS
+-- ============================================================
+
 function ConsumesManagerBar_IsGlowAvailable()
     return DoiteGlow ~= nil
 end
 
 function ConsumesManagerBar_LoadGlowSettings()
-    -- Load glow reminder settings from saved variables
-    if ConsumesManagerBar_Settings2.glowReminders then
-        glowReminders = ConsumesManagerBar_Settings2.glowReminders
-    else
-        glowReminders = {}
-        ConsumesManagerBar_Settings2.glowReminders = glowReminders
-    end
+    glowReminders = ConsumesManagerBar_Settings2.glowReminders or {}
+    ConsumesManagerBar_Settings2.glowReminders = glowReminders
 end
 
 function ConsumesManagerBar_SaveGlowSettings()
-    -- Save glow reminder settings
     ConsumesManagerBar_Settings2.glowReminders = glowReminders
 end
 
 function ConsumesManagerBar_ToggleGlowReminder(itemID)
-    -- Toggle glow reminder setting for an item
-    -- nil = default enabled (checkbox checked)
-    -- false = explicitly disabled (checkbox unchecked)
-    
-    local currentState = glowReminders[itemID]
-    local itemName = consumablesList[itemID] or "Item " .. itemID
-    
-    if currentState == false then
-        -- Currently explicitly disabled, remove setting (go back to default enabled)
+    local itemName = consumablesList[itemID] or ("Item " .. itemID)
+    if glowReminders[itemID] == false then
         glowReminders[itemID] = nil
-        DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar: Glow reminder ENABLED for " .. itemName)
+        DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar: Glow ENABLED for " .. itemName)
     else
-        -- Currently enabled (nil or true), disable it
         glowReminders[itemID] = false
-        DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar: Glow reminder DISABLED for " .. itemName)
+        DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar: Glow DISABLED for " .. itemName)
     end
-    
     ConsumesManagerBar_SaveGlowSettings()
     ConsumesManagerBar_UpdateBars()
 end
 
 function ConsumesManagerBar_ShouldGlow(item)
-    -- Determine if an item should glow when buff is missing
     if not item then return false end
-    
-    -- Check if glow is explicitly disabled for this item
-    if glowReminders[item.id] == false then
-        return false
-    end
-    
-    -- Default behavior: glow if item is available but not buffed
+    if glowReminders[item.id] == false then return false end
     return (item.count > 0) and (not item.buffed)
 end
 
 function ConsumesManagerBar_StartGlow(iconFrame)
-    if not iconFrame or not iconFrame:IsShown() then
-        return
-    end
-    
-    -- Stop any existing glow for this item first (in case item moved to different frame)
+    if not iconFrame or not iconFrame:IsShown() then return end
     ConsumesManagerBar_StopGlowByItemID(iconFrame.itemID)
-    
-    -- Try to use DoiteGlow if available
     if ConsumesManagerBar_IsGlowAvailable() then
         DoiteGlow.Start(iconFrame)
-        glowingIcons[iconFrame.itemID] = {
-            frame = iconFrame,
-            usingDoiteGlow = true
-        }
+        glowingIcons[iconFrame.itemID] = { frame = iconFrame, usingDoiteGlow = true }
     else
-        -- Fallback to simple highlight if DoiteGlow is not available
         if not iconFrame.missingBuffGlow then
-            -- Create a simple glow effect
             local glow = iconFrame:CreateTexture(nil, "OVERLAY")
             glow:SetWidth(ICON_SIZE + 8)
             glow:SetHeight(ICON_SIZE + 8)
             glow:SetPoint("CENTER", iconFrame, "CENTER", 0, 0)
             glow:SetTexture("Interface\\Buttons\\UI-ActionButton-Border")
             glow:SetBlendMode("ADD")
-            glow:SetVertexColor(1, 0.2, 0.2, 0.8) -- Red glow for missing buffs
+            glow:SetVertexColor(1, 0.2, 0.2, 0.8)
             glow:SetDrawLayer("OVERLAY", 6)
             iconFrame.missingBuffGlow = glow
         end
-        
         iconFrame.missingBuffGlow:Show()
-        glowingIcons[iconFrame.itemID] = {
-            frame = iconFrame,
-            usingDoiteGlow = false
-        }
+        glowingIcons[iconFrame.itemID] = { frame = iconFrame, usingDoiteGlow = false }
     end
 end
 
 function ConsumesManagerBar_StopGlowByItemID(itemID)
-    -- Stop glow for a specific item ID (regardless of which frame it's on)
-    local glowData = glowingIcons[itemID]
-    if glowData then
-        if glowData.usingDoiteGlow and ConsumesManagerBar_IsGlowAvailable() then
-            DoiteGlow.Stop(glowData.frame)
-        elseif glowData.frame.missingBuffGlow then
-            glowData.frame.missingBuffGlow:Hide()
+    local d = glowingIcons[itemID]
+    if d then
+        if d.usingDoiteGlow and ConsumesManagerBar_IsGlowAvailable() then
+            DoiteGlow.Stop(d.frame)
+        elseif d.frame.missingBuffGlow then
+            d.frame.missingBuffGlow:Hide()
         end
         glowingIcons[itemID] = nil
     end
 end
 
 function ConsumesManagerBar_StopGlow(iconFrame)
-    if not iconFrame or not iconFrame.itemID then
-        return
-    end
-    
-    -- Check if this frame actually has the glow
-    local glowData = glowingIcons[iconFrame.itemID]
-    if glowData and glowData.frame == iconFrame then
-        if glowData.usingDoiteGlow and ConsumesManagerBar_IsGlowAvailable() then
+    if not iconFrame or not iconFrame.itemID then return end
+    local d = glowingIcons[iconFrame.itemID]
+    if d and d.frame == iconFrame then
+        if d.usingDoiteGlow and ConsumesManagerBar_IsGlowAvailable() then
             DoiteGlow.Stop(iconFrame)
         elseif iconFrame.missingBuffGlow then
             iconFrame.missingBuffGlow:Hide()
@@ -166,181 +166,109 @@ function ConsumesManagerBar_StopGlow(iconFrame)
 end
 
 function ConsumesManagerBar_UpdateGlowForIcon(iconFrame, item)
-    if not iconFrame or not item then
-        return
-    end
-    
-    -- Check if item should glow based on settings and state
+    if not iconFrame or not item then return end
     local shouldGlow = ConsumesManagerBar_ShouldGlow(item)
-    
-    -- Check current glow state for this frame
-    local currentGlowData = glowingIcons[item.id]
-    local isCurrentlyGlowing = currentGlowData and currentGlowData.frame == iconFrame
-    
-    -- Only change state if it's different
-    if shouldGlow and not isCurrentlyGlowing then
+    local current    = glowingIcons[item.id]
+    local isGlowing  = current and current.frame == iconFrame
+    if shouldGlow and not isGlowing then
         ConsumesManagerBar_StartGlow(iconFrame)
-    elseif not shouldGlow and isCurrentlyGlowing then
+    elseif not shouldGlow and isGlowing then
         ConsumesManagerBar_StopGlow(iconFrame)
     end
-    -- If shouldGlow and isCurrentlyGlowing are the same, do nothing
 end
 
 function ConsumesManagerBar_CleanupGlowEffects()
-    -- Clean up any glow effects for icons that no longer exist
-    local currentItemIDs = {}
-    
-    -- Collect all current item IDs from both bars
-    if barFrame and barFrame.icons then
-        for i, iconFrame in ipairs(barFrame.icons) do
-            if iconFrame and iconFrame.itemID then
-                currentItemIDs[iconFrame.itemID] = true
+    local living = {}
+    for _, frame in pairs(barFrames) do
+        if frame.icons then
+            for _, iconFrame in ipairs(frame.icons) do
+                if iconFrame and iconFrame.itemID then
+                    living[iconFrame.itemID] = true
+                end
             end
         end
     end
-    
-    if disabledBarFrame and disabledBarFrame.icons then
-        for i, iconFrame in ipairs(disabledBarFrame.icons) do
-            if iconFrame and iconFrame.itemID then
-                currentItemIDs[iconFrame.itemID] = true
-            end
-        end
-    end
-    
-    -- Remove glow effects for items that are no longer displayed
-    for itemID, glowData in pairs(glowingIcons) do
-        if not currentItemIDs[itemID] then
+    for itemID in pairs(glowingIcons) do
+        if not living[itemID] then
             ConsumesManagerBar_StopGlowByItemID(itemID)
         end
     end
 end
 
+function ConsumesManagerBar_ResetAllGlowSettings()
+    glowReminders = {}
+    ConsumesManagerBar_SaveGlowSettings()
+    ConsumesManagerBar_UpdateBars()
+    DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar: All glow settings reset.")
+end
+
+-- ============================================================
+-- TEXTURE CACHE
+-- ============================================================
+
 function ConsumesManagerBar_GetItemTexture(itemID)
-    -- Check if we already have a dynamically loaded texture cached
-    if itemTextureCache[itemID] then
-        return itemTextureCache[itemID]
-    end
-    
-    -- Try to get the texture dynamically from the game (this works even if item is not in bags)
-    -- This is the preferred method as it gets the actual item texture
+    if itemTextureCache[itemID] then return itemTextureCache[itemID] end
     local _, _, _, _, _, _, _, _, texture = GetItemInfo(itemID)
-    
     if texture then
-        -- Cache the dynamically loaded texture for future use
         itemTextureCache[itemID] = texture
         return texture
     end
-    
-    -- Only use itemlist.lua or consumablesCategories textures as a LAST RESORT
-    -- We'll mark these as temporary placeholders
-    local placeholderTexture = nil
-    
-    -- Try to use the texture from consumablesCategories if available
     if consumablesCategories then
-        for categoryName, consumables in pairs(consumablesCategories) do
+        for _, consumables in pairs(consumablesCategories) do
             if consumables then
-                for _, consumable in ipairs(consumables) do
-                    if consumable.id == itemID and consumable.texture then
-                        placeholderTexture = consumable.texture
-                        break
-                    end
+                for _, c in ipairs(consumables) do
+                    if c.id == itemID and c.texture then return c.texture end
                 end
             end
-            if placeholderTexture then break end
         end
     end
-    
-    -- If we found a placeholder, use it but don't cache it permanently
-    if placeholderTexture then
-        return placeholderTexture
-    end
-    
-    -- Fallback to question mark
     return "Interface\\Icons\\INV_Misc_QuestionMark"
 end
 
--- Function to attempt to refresh item textures when items are in bags
 function ConsumesManagerBar_RefreshItemTextures()
-    if not ConsumesManager_SelectedItems then return 0 end
-    
+    if not ConsumesManager_SelectedItems then return end
     local updated = 0
     for itemID, isTracked in ConsumesManager_SelectedItems do
         if isTracked then
-            -- Try to get the actual item texture from the game
             local _, _, _, _, _, _, _, _, texture = GetItemInfo(itemID)
-            
             if texture then
-                -- Check if we already have this texture cached
-                local currentTexture = itemTextureCache[itemID]
-                if not currentTexture or currentTexture == "Interface\\Icons\\INV_Misc_QuestionMark" or 
-                   string.find(currentTexture, "Interface\\Icons\\Spell_", 1, true) then
-                    -- We got a new texture or are replacing a placeholder! Cache it
+                local cur = itemTextureCache[itemID]
+                if not cur or cur == "Interface\\Icons\\INV_Misc_QuestionMark" then
                     itemTextureCache[itemID] = texture
                     updated = updated + 1
                 end
             end
         end
     end
-    
     if updated > 0 then
-        -- Save the updated texture cache
-        ConsumesManagerBar_SaveTextureCache()
-        -- Update the bars to show the new textures
-        ConsumesManagerBar_UpdateBars()
-        -- REMOVED CHAT MESSAGE TO PREVENT SPAM
-    end
-    
-    return updated
-end
-
--- Function to force refresh a specific item's texture
-function ConsumesManagerBar_ForceRefreshTexture(itemID)
-    -- Clear any cached texture for this item
-    itemTextureCache[itemID] = nil
-    
-    -- Try to get fresh texture from the game
-    local _, _, _, _, _, _, _, _, texture = GetItemInfo(itemID)
-    
-    if texture then
-        itemTextureCache[itemID] = texture
         ConsumesManagerBar_SaveTextureCache()
         ConsumesManagerBar_UpdateBars()
-        return true
     end
-    
-    return false
 end
 
--- Function to save the texture cache to saved variables
 function ConsumesManagerBar_SaveTextureCache()
-    if ConsumesManagerBar_Settings2 then
-        ConsumesManagerBar_Settings2.itemTextureCache = itemTextureCache
-    end
+    ConsumesManagerBar_Settings2.itemTextureCache = itemTextureCache
 end
 
--- Function to load the texture cache from saved variables
 function ConsumesManagerBar_LoadTextureCache()
-    if ConsumesManagerBar_Settings2 and ConsumesManagerBar_Settings2.itemTextureCache then
-        itemTextureCache = ConsumesManagerBar_Settings2.itemTextureCache
-    else
-        itemTextureCache = {}
-        if ConsumesManagerBar_Settings2 then
-            ConsumesManagerBar_Settings2.itemTextureCache = itemTextureCache
-        end
-    end
+    itemTextureCache = ConsumesManagerBar_Settings2.itemTextureCache or {}
+    ConsumesManagerBar_Settings2.itemTextureCache = itemTextureCache
 end
+
+-- ============================================================
+-- BUFF DATA
+-- ============================================================
 
 function ConsumesManagerBar_GetItemBuffData(itemID)
-    -- Search through consumablesCategories to find item data
     if consumablesCategories then
-        for categoryName, consumables in pairs(consumablesCategories) do
+        for _, consumables in pairs(consumablesCategories) do
             if consumables then
-                for _, consumable in ipairs(consumables) do
-                    if consumable.id == itemID then
+                for _, c in ipairs(consumables) do
+                    if c.id == itemID then
                         return {
-                            priority = consumable.priority or 99,
-                            spellId = consumable.spellId,
-                            weaponEnchantName = consumable.weaponEnchantName
+                            priority          = c.priority or 99,
+                            spellId           = c.spellId,
+                            weaponEnchantName = c.weaponEnchantName
                         }
                     end
                 end
@@ -351,1440 +279,759 @@ function ConsumesManagerBar_GetItemBuffData(itemID)
 end
 
 function ConsumesManagerBar_GetEffectivePriority(itemID)
-    -- Return custom priority if set, otherwise default priority
-    if customPriorities[itemID] then
-        return customPriorities[itemID]
-    end
-    
-    local buffData = ConsumesManagerBar_GetItemBuffData(itemID)
-    return buffData.priority or 99
+    if customPriorities[itemID] then return customPriorities[itemID] end
+    return ConsumesManagerBar_GetItemBuffData(itemID).priority or 99
 end
 
 function ConsumesManagerBar_SaveCustomPriorities()
-    -- Save custom priorities to settings
     ConsumesManagerBar_Settings2.customPriorities = customPriorities
 end
 
 function ConsumesManagerBar_LoadCustomPriorities()
-    -- Load custom priorities from settings
-    if ConsumesManagerBar_Settings2.customPriorities then
-        customPriorities = ConsumesManagerBar_Settings2.customPriorities
-    else
-        customPriorities = {}
-    end
+    customPriorities = ConsumesManagerBar_Settings2.customPriorities or {}
 end
 
 function ConsumesManagerBar_SetCustomPriority(itemID, priority)
-    -- Set custom priority for an item
     customPriorities[itemID] = priority
     ConsumesManagerBar_SaveCustomPriorities()
     ConsumesManagerBar_UpdateBars()
 end
 
-function ConsumesManagerBar_ResetCustomPriority(itemID)
-    -- Reset to default priority
-    customPriorities[itemID] = nil
-    ConsumesManagerBar_SaveCustomPriorities()
-    ConsumesManagerBar_UpdateBars()
-end
-
 function ConsumesManagerBar_ResetAllCustomPriorities()
-    -- Reset all custom priorities
     customPriorities = {}
     ConsumesManagerBar_SaveCustomPriorities()
     ConsumesManagerBar_UpdateBars()
-    DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar: All custom priorities reset to defaults.")
-end
-
-function ConsumesManagerBar_ResetAllGlowSettings()
-    -- Reset all glow reminder settings to default (enabled)
-    glowReminders = {}
-    ConsumesManagerBar_SaveGlowSettings()
-    ConsumesManagerBar_UpdateBars()
-    DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar: All glow reminder settings reset to defaults (enabled).")
-end
-
-function ConsumesManagerBar_GetBuffDuration(itemID)
-    local buffData = ConsumesManagerBar_GetItemBuffData(itemID)
-    if not buffData or not buffData.spellId or buffData.spellId == 0 then
-        return nil, nil
-    end
-    
-    -- Loop through player buffs
-    for i = 1, 32 do
-        local texture, index, spellId = UnitBuff("player", i)
-        if not texture then break end
-        
-        -- Match by spell ID (3rd parameter from superwow.dll)
-        if spellId and spellId == buffData.spellId then
-            -- Try to get the remaining time using GetPlayerBuff
-            local buffIndex = GetPlayerBuff(i - 1, "HELPFUL")
-            if buffIndex >= 0 then
-                local timeLeft = GetPlayerBuffTimeLeft(buffIndex)
-                return timeLeft, buffIndex
-            end
-        end
-    end
-    
-    return nil, nil
+    DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar: All custom priorities reset.")
 end
 
 function ConsumesManagerBar_HasBuff(itemID)
-    local buffData = ConsumesManagerBar_GetItemBuffData(itemID)
-    if not buffData or not buffData.spellId or buffData.spellId == 0 then
-        return false
-    end
-    
-    -- superwow.dll's UnitBuff returns: texture, index, spellId
+    local d = ConsumesManagerBar_GetItemBuffData(itemID)
+    if not d or not d.spellId or d.spellId == 0 then return false end
     for i = 1, 32 do
         local texture, index, spellId = UnitBuff("player", i)
         if not texture then break end
-        
-        -- Match by spell ID (3rd parameter from superwow.dll)
-        if spellId and spellId == buffData.spellId then
-            return true
-        end
+        if spellId and spellId == d.spellId then return true end
     end
-    
     return false
 end
 
 function ConsumesManagerBar_HasWeaponEnchant(itemID)
-    local buffData = ConsumesManagerBar_GetItemBuffData(itemID)
-    if not buffData or not buffData.weaponEnchantName then
-        return false, 0, nil
-    end
-    
-    -- Get weapon enchant names
+    local d = ConsumesManagerBar_GetItemBuffData(itemID)
+    if not d or not d.weaponEnchantName then return false, 0, nil end
     local mhName, ohName = GetWeaponEnchantInfo("player")
+    local _, mhExp, _, _, ohExp = GetWeaponEnchantInfo()
     local count = 0
     local timeLeft = nil
-    
-    -- Get expiration times
-    local hasMHEnchant, mhExpiration, mhCharges, hasOHEnchant, ohExpiration, ohCharges = GetWeaponEnchantInfo()
-    
-    -- Check main hand
-    if mhName and mhName == buffData.weaponEnchantName then
+    if mhName and mhName == d.weaponEnchantName then
         count = count + 1
-        if mhExpiration and mhExpiration > 0 then
-            local mhTimeLeftSec = mhExpiration / 1000  -- Convert ms to seconds
-            if not timeLeft or mhTimeLeftSec < timeLeft then
-                timeLeft = mhTimeLeftSec
-            end
-        else
-            -- No expiration time (infinite duration like some poisons)
-            timeLeft = -1
-        end
+        local t = (mhExp and mhExp > 0) and (mhExp / 1000) or -1
+        timeLeft = (not timeLeft or (t > 0 and t < timeLeft)) and t or timeLeft
     end
-    
-    -- Check off hand
-    if ohName and ohName == buffData.weaponEnchantName then
+    if ohName and ohName == d.weaponEnchantName then
         count = count + 1
-        if ohExpiration and ohExpiration > 0 then
-            local ohTimeLeftSec = ohExpiration / 1000  -- Convert ms to seconds
-            if not timeLeft or ohTimeLeftSec < timeLeft then
-                timeLeft = ohTimeLeftSec
-            end
-        else
-            -- No expiration time (infinite duration like some poisons)
-            timeLeft = -1
-        end
+        local t = (ohExp and ohExp > 0) and (ohExp / 1000) or -1
+        timeLeft = (not timeLeft or (t > 0 and t < timeLeft)) and t or timeLeft
     end
-    
     return count > 0, count, timeLeft
 end
 
+function ConsumesManagerBar_GetBuffDuration(itemID)
+    local d = ConsumesManagerBar_GetItemBuffData(itemID)
+    if not d or not d.spellId or d.spellId == 0 then return nil end
+    local targetTexture = nil
+    for i = 1, 32 do
+        local texture, index, spellId = UnitBuff("player", i)
+        if not texture then break end
+        if spellId and spellId == d.spellId then targetTexture = texture; break end
+    end
+    if not targetTexture then return nil end
+    for i = 0, 31 do
+        local buffId = GetPlayerBuff(i, "HELPFUL|HARMFUL|PASSIVE")
+        if buffId >= 0 then
+            local bt = GetPlayerBuffTexture(buffId)
+            if bt and bt == targetTexture then
+                local tl = GetPlayerBuffTimeLeft(buffId)
+                return (tl and tl > 0) and tl or -1
+            end
+        end
+    end
+    return nil
+end
+
 function ConsumesManagerBar_UpdateBuffedItems()
-    -- Clear previous buff tracking
     buffedItems = {}
-    buffTimes = {}
-    
-    -- Check each tracked item to see if it's currently buffed
-    if ConsumesManager_SelectedItems then
-        for itemID, isTracked in ConsumesManager_SelectedItems do
-            if isTracked then
-                local buffCount = 0
-                local hasBuff = false
-                local timeLeft = nil
-                
-                -- Check for regular buffs
-                if ConsumesManagerBar_HasBuff(itemID) then
-                    buffCount = 1  -- Regular buffs count as 1
-                    hasBuff = true
-                    timeLeft = ConsumesManagerBar_GetBuffDuration(itemID)
-                end
-                
-                -- Check for weapon enchants (could be 1 or 2)
-                local hasEnchant, enchantCount, enchantTimeLeft = ConsumesManagerBar_HasWeaponEnchant(itemID)
-                if hasEnchant then
-                    buffCount = enchantCount  -- 1 or 2 for weapon enchants
-                    hasBuff = true
-                    timeLeft = enchantTimeLeft or -1
-                end
-                
-                if hasBuff then
-                    buffedItems[itemID] = buffCount
-                    buffTimes[itemID] = timeLeft
-                end
+    buffTimes   = {}
+    if not ConsumesManager_SelectedItems then return end
+    for itemID, isTracked in ConsumesManager_SelectedItems do
+        if isTracked then
+            local buffCount = 0
+            local hasBuff   = false
+            local timeLeft  = nil
+            if ConsumesManagerBar_HasBuff(itemID) then
+                buffCount = 1; hasBuff = true
+                timeLeft = ConsumesManagerBar_GetBuffDuration(itemID)
+            end
+            local hasEnchant, enchantCount, enchantTime = ConsumesManagerBar_HasWeaponEnchant(itemID)
+            if hasEnchant then
+                buffCount = enchantCount; hasBuff = true
+                timeLeft = enchantTime or -1
+            end
+            if hasBuff then
+                buffedItems[itemID] = buffCount
+                buffTimes[itemID]   = timeLeft
             end
         end
     end
 end
 
-function ConsumesManagerBar_ApplyScaling()
-    -- Calculate scaled dimensions based on user settings
-    local scale = ConsumesManagerBar_Settings2.scale or 1.0
-    local scaledBarHeight = BAR_HEIGHT * scale
-    local scaledIconSize = ICON_SIZE * scale
-    local scaledIconSpacing = ICON_SPACING * scale
-    
-    -- Apply scaling to main bar
-    if barFrame then
-        barFrame:SetHeight(scaledBarHeight)
-        
-        -- Update icon positions and sizes
-        for i, iconFrame in ipairs(barFrame.icons) do
-            if iconFrame then
-                iconFrame:SetWidth(scaledIconSize)
-                iconFrame:SetHeight(scaledIconSize)
-                
-                -- Update icon position
-                iconFrame:SetPoint("LEFT", barFrame, "LEFT", (i-1) * (scaledIconSize + scaledIconSpacing) + scaledIconSpacing, 0)
-                
-                -- Update buff highlight size
-                if iconFrame.buffHighlight then
-                    iconFrame.buffHighlight:SetWidth(scaledIconSize + 17 * scale)
-                    iconFrame.buffHighlight:SetHeight(scaledIconSize + 17 * scale)
-                end
-                
-                -- Update move indicator size
-                if iconFrame.moveIndicator then
-                    iconFrame.moveIndicator:SetWidth(12 * scale)
-                    iconFrame.moveIndicator:SetHeight(12 * scale)
-                end
-                
-                -- Update glow checkbox size
-                if iconFrame.glowCheckbox then
-                    iconFrame.glowCheckbox:SetWidth(12 * scale)
-                    iconFrame.glowCheckbox:SetHeight(12 * scale)
-                    if iconFrame.glowCheckbox.checkTexture then
-                        iconFrame.glowCheckbox.checkTexture:SetWidth(10 * scale)
-                        iconFrame.glowCheckbox.checkTexture:SetHeight(10 * scale)
-                    end
-                end
-                
-                -- Update arrow button sizes
-                if iconFrame.leftArrow then
-                    iconFrame.leftArrow:SetWidth(12 * scale)
-                    iconFrame.leftArrow:SetHeight(12 * scale)
-                end
-                
-                if iconFrame.rightArrow then
-                    iconFrame.rightArrow:SetWidth(12 * scale)
-                    iconFrame.rightArrow:SetHeight(12 * scale)
-                end
-                
-                -- Update font sizes WITH THICKOUTLINE
-                if iconFrame.count then
-                    local fontSize = 12 * scale
-                    if fontSize < 8 then fontSize = 8 end
-                    if fontSize > 20 then fontSize = 20 end
-                    iconFrame.count:SetFont("Fonts\\FRIZQT__.TTF", fontSize, "THICKOUTLINE")
-                end
-                
-                if iconFrame.timeText then
-                    local fontSize = 10 * scale
-                    if fontSize < 8 then fontSize = 8 end
-                    if fontSize > 18 then fontSize = 18 end
-                    iconFrame.timeText:SetFont("Fonts\\FRIZQT__.TTF", fontSize, "THICKOUTLINE")
-                end
-                
-                -- Update glow size for missing buffs
-                if iconFrame.missingBuffGlow then
-                    iconFrame.missingBuffGlow:SetWidth(scaledIconSize + 8 * scale)
-                    iconFrame.missingBuffGlow:SetHeight(scaledIconSize + 8 * scale)
-                end
-            end
-        end
-        
-        -- Update bar width
-        if barFrame.icons and table.getn(barFrame.icons) > 0 then
-            local iconCount = table.getn(barFrame.icons)
-            local newWidth = (iconCount * (scaledIconSize + scaledIconSpacing)) + scaledIconSpacing
-            barFrame:SetWidth(newWidth)
-        end
-    end
-    
-    -- Apply scaling to secondary bar
-    if disabledBarFrame then
-        disabledBarFrame:SetHeight(scaledBarHeight)
-        
-        -- Update icon positions and sizes
-        for i, iconFrame in ipairs(disabledBarFrame.icons) do
-            if iconFrame then
-                iconFrame:SetWidth(scaledIconSize)
-                iconFrame:SetHeight(scaledIconSize)
-                
-                -- Update icon position
-                iconFrame:SetPoint("LEFT", disabledBarFrame, "LEFT", (i-1) * (scaledIconSize + scaledIconSpacing) + scaledIconSpacing, 0)
-                
-                -- Update buff highlight size
-                if iconFrame.buffHighlight then
-                    iconFrame.buffHighlight:SetWidth(scaledIconSize + 17 * scale)
-                    iconFrame.buffHighlight:SetHeight(scaledIconSize + 17 * scale)
-                end
-                
-                -- Update move indicator size
-                if iconFrame.moveIndicator then
-                    iconFrame.moveIndicator:SetWidth(12 * scale)
-                    iconFrame.moveIndicator:SetHeight(12 * scale)
-                end
-                
-                -- Update glow checkbox size
-                if iconFrame.glowCheckbox then
-                    iconFrame.glowCheckbox:SetWidth(12 * scale)
-                    iconFrame.glowCheckbox:SetHeight(12 * scale)
-                    if iconFrame.glowCheckbox.checkTexture then
-                        iconFrame.glowCheckbox.checkTexture:SetWidth(10 * scale)
-                        iconFrame.glowCheckbox.checkTexture:SetHeight(10 * scale)
-                    end
-                end
-                
-                -- Update arrow button sizes
-                if iconFrame.leftArrow then
-                    iconFrame.leftArrow:SetWidth(12 * scale)
-                    iconFrame.leftArrow:SetHeight(12 * scale)
-                end
-                
-                if iconFrame.rightArrow then
-                    iconFrame.rightArrow:SetWidth(12 * scale)
-                    iconFrame.rightArrow:SetHeight(12 * scale)
-                end
-                
-                -- Update font sizes WITH THICKOUTLINE
-                if iconFrame.count then
-                    local fontSize = 12 * scale
-                    if fontSize < 8 then fontSize = 8 end
-                    if fontSize > 20 then fontSize = 20 end
-                    iconFrame.count:SetFont("Fonts\\FRIZQT__.TTF", fontSize, "THICKOUTLINE")
-                end
-                
-                if iconFrame.timeText then
-                    local fontSize = 10 * scale
-                    if fontSize < 8 then fontSize = 8 end
-                    if fontSize > 18 then fontSize = 18 end
-                    iconFrame.timeText:SetFont("Fonts\\FRIZQT__.TTF", fontSize, "THICKOUTLINE")
-                end
-                
-                -- Update glow size for missing buffs
-                if iconFrame.missingBuffGlow then
-                    iconFrame.missingBuffGlow:SetWidth(scaledIconSize + 8 * scale)
-                    iconFrame.missingBuffGlow:SetHeight(scaledIconSize + 8 * scale)
-                end
-            end
-        end
-        
-        -- Update bar width
-        if disabledBarFrame.icons and table.getn(disabledBarFrame.icons) > 0 then
-            local iconCount = table.getn(disabledBarFrame.icons)
-            local newWidth = (iconCount * (scaledIconSize + scaledIconSpacing)) + scaledIconSpacing
-            disabledBarFrame:SetWidth(newWidth)
-        end
-    end
-    
-    -- Update title font sizes WITH THICKOUTLINE
-    if barFrame and barFrame.title then
-        local fontSize = 12 * scale
-        if fontSize < 10 then fontSize = 10 end
-        if fontSize > 16 then fontSize = 16 end
-        barFrame.title:SetFont("Fonts\\FRIZQT__.TTF", fontSize, "THICKOUTLINE")
-    end
-    
-    if barFrame and barFrame.editText then
-        local fontSize = 10 * scale
-        if fontSize < 8 then fontSize = 8 end
-        if fontSize > 14 then fontSize = 14 end
-        barFrame.editText:SetFont("Fonts\\FRIZQT__.TTF", fontSize, "THICKOUTLINE")
-    end
-    
-    if disabledBarFrame and disabledBarFrame.title then
-        local fontSize = 12 * scale
-        if fontSize < 10 then fontSize = 10 end
-        if fontSize > 16 then fontSize = 16 end
-        disabledBarFrame.title:SetFont("Fonts\\FRIZQT__.TTF", fontSize, "THICKOUTLINE")
-    end
-end
+-- ============================================================
+-- PULSE ANIMATION
+-- ============================================================
 
 function ConsumesManagerBar_UpdatePulseAnimation()
-    -- Calculate elapsed time since last update
-    local currentTime = GetTime()
-    local elapsed = currentTime - lastPulseUpdate
-    lastPulseUpdate = currentTime
-    
-    -- Limit elapsed to prevent large jumps
-    if elapsed > 0.2 then
-        elapsed = 0.05
-    end
-    
-    -- Update all pulsing timers
-    for itemID, pulseData in pairs(pulsingTimers) do
-        if pulseData.frame and pulseData.frame:IsShown() then
-            pulseData.lastUpdate = (pulseData.lastUpdate or 0) + elapsed
-            
-            -- Update every 0.1 seconds for smooth animation
-            if pulseData.lastUpdate >= 0.1 then
-                local alpha = pulseData.frame.timeText:GetAlpha()
-                
-                -- Pulse between 0.3 and 1.0 alpha for text
-                if pulseData.direction == 1 then
-                    alpha = alpha + 0.15
-                    if alpha >= 1.0 then
-                        alpha = 1.0
-                        pulseData.direction = -1
-                    end
+    local now     = GetTime()
+    local elapsed = now - lastPulseUpdate
+    lastPulseUpdate = now
+    if elapsed > 0.2 then elapsed = 0.05 end
+
+    for itemID, p in pairs(pulsingTimers) do
+        if p.frame and p.frame:IsShown() then
+            p.lastUpdate = (p.lastUpdate or 0) + elapsed
+            if p.lastUpdate >= 0.1 then
+                local alpha = p.frame.timeText:GetAlpha()
+                if p.direction == 1 then
+                    alpha = math.min(alpha + 0.15, 1.0)
+                    if alpha >= 1.0 then p.direction = -1 end
                 else
-                    alpha = alpha - 0.15
-                    if alpha <= 0.3 then
-                        alpha = 0.3
-                        pulseData.direction = 1
-                    end
+                    alpha = math.max(alpha - 0.15, 0.3)
+                    if alpha <= 0.3 then p.direction = 1 end
                 end
-                
-                -- Apply same alpha to time text
-                pulseData.frame.timeText:SetAlpha(alpha)
-                
-                -- Also apply same alpha to count text if it exists and has text
-                if pulseData.frame.count and pulseData.frame.count:GetText() ~= "" then
-                    pulseData.frame.count:SetAlpha(alpha)
+                p.frame.timeText:SetAlpha(alpha)
+                if p.frame.count and p.frame.count:GetText() ~= "" then
+                    p.frame.count:SetAlpha(alpha)
                 end
-                
-                -- Also pulse the buff highlight glow effect if it exists
-                if pulseData.frame.buffHighlight and pulseData.frame.buffHighlight:IsShown() then
-                    -- For glow effect, pulse between 0.5 and 1.0 alpha (more subtle)
-                    local glowAlpha
-                    if pulseData.timeLeft < 30 then
-                        -- Under 30 seconds: faster, more intense pulse for red warning
-                        glowAlpha = 0.4 + (alpha * 0.6) -- 0.4 to 1.0 range
-                    else
-                        -- 30-60 seconds: slower, softer pulse for yellow warning
-                        glowAlpha = 0.6 + (alpha * 0.4) -- 0.6 to 1.0 range
-                    end
-                    pulseData.frame.buffHighlight:SetAlpha(glowAlpha)
+                if p.frame.buffHighlight and p.frame.buffHighlight:IsShown() then
+                    local ga = (p.timeLeft and p.timeLeft < 30)
+                               and (0.4 + alpha * 0.6)
+                               or  (0.6 + alpha * 0.4)
+                    p.frame.buffHighlight:SetAlpha(ga)
                 end
-                
-                pulseData.lastUpdate = 0
+                p.lastUpdate = 0
             end
         else
-            -- Clean up if frame no longer exists
             pulsingTimers[itemID] = nil
         end
     end
 end
 
-function ConsumesManagerBar_Initialize()
-    -- Create the main bar frame (for enabled items)
-    barFrame = CreateFrame("Frame", "ConsumesManagerBarFrame", UIParent)
-    barFrame:SetHeight(BAR_HEIGHT)
-    
-    -- Load saved scale or use default
-    if ConsumesManagerBar_Settings2.scale == nil then
-        ConsumesManagerBar_Settings2.scale = 1.0
-    end
-    
-    -- Load saved position or use default (UPDATED VARIABLE NAME)
-    if ConsumesManagerBar_Settings2.barPosition then
-        barFrame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", 
-                         ConsumesManagerBar_Settings2.barPosition.x, 
-                         ConsumesManagerBar_Settings2.barPosition.y)
-    else
-        barFrame:SetPoint("CENTER", UIParent, "CENTER", 0, -150)
-    end
-    
-    barFrame:SetFrameStrata("MEDIUM")
-    barFrame:SetMovable(true)
-    barFrame:EnableMouse(true)
-    barFrame:RegisterForDrag("LeftButton")
-    barFrame:SetScript("OnDragStart", function() 
-        this:StartMoving() 
-    end)
-    barFrame:SetScript("OnDragStop", function() 
-        this:StopMovingOrSizing() 
-        -- Save position
-        ConsumesManagerBar_SavePosition()
-    end)
-    
-    -- Background
-    local bg = barFrame:CreateTexture(nil, "BACKGROUND")
-    bg:SetAllPoints(barFrame)
-    bg:SetTexture(0, 0, 0, 0)
-    barFrame.background = bg
-    
-    -- Border
-    barFrame:SetBackdrop({
-        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
-        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-        tile = true, 
-        tileSize = 16, 
-        edgeSize = 16,
-        insets = { left = 4, right = 4, top = 4, bottom = 4 }
-    })
-    barFrame:SetBackdropColor(0.1, 0.1, 0.1, 0.8)
-    barFrame:SetBackdropBorderColor(0.5, 0.5, 0.5, 0.8)
-    
-    -- Title (only visible when dragging)
-    local title = barFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    title:SetPoint("TOP", barFrame, "TOP", 0, -5)
-    title:SetText("Consumes Bar - Drag to move")
-    title:SetTextColor(1, 1, 1, 0.5)
-    barFrame.title = title
-    
-    -- Edit mode indicator
-    local editText = barFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    editText:SetPoint("BOTTOM", barFrame, "BOTTOM", 0, 5)
-    editText:SetText("EDIT MODE - Click icons to move between bars, use arrows to reorder, click checkbox to toggle glow reminder")
-    editText:SetTextColor(1, 0.5, 0.5)
-    editText:Hide()
-    barFrame.editText = editText
-    
-    -- We'll create icons dynamically in UpdateBar instead of pre-creating them
-    barFrame.icons = {}
-    
-    -- Create the disabled bar frame (for hidden items)
-    disabledBarFrame = CreateFrame("Frame", "ConsumesManagerDisabledBarFrame", UIParent)
-    disabledBarFrame:SetHeight(BAR_HEIGHT)
-    
-    -- Load saved position or position relative to main bar (UPDATED VARIABLE NAME)
-    if ConsumesManagerBar_Settings2.disabledBarPosition then
-        disabledBarFrame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", 
-                                ConsumesManagerBar_Settings2.disabledBarPosition.x, 
-                                ConsumesManagerBar_Settings2.disabledBarPosition.y)
-    else
-        disabledBarFrame:SetPoint("TOP", barFrame, "BOTTOM", 0, -10)
-    end
-    
-    disabledBarFrame:SetFrameStrata("MEDIUM")
-    disabledBarFrame:SetMovable(true)
-    disabledBarFrame:EnableMouse(true)
-    disabledBarFrame:RegisterForDrag("LeftButton")
-    disabledBarFrame:SetScript("OnDragStart", function() 
-        this:StartMoving() 
-    end)
-    disabledBarFrame:SetScript("OnDragStop", function() 
-        this:StopMovingOrSizing() 
-        -- Save position
-        ConsumesManagerBar_SavePosition()
-    end)
-    
-    -- Background for disabled bar
-    local disabledBg = disabledBarFrame:CreateTexture(nil, "BACKGROUND")
-    disabledBg:SetAllPoints(disabledBarFrame)
-    disabledBg:SetTexture(0, 0, 0, 0)
-    disabledBarFrame.background = disabledBg
-    
-    -- Border for disabled bar
-    disabledBarFrame:SetBackdrop({
-        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
-        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-        tile = true, 
-        tileSize = 16, 
-        edgeSize = 16,
-        insets = { left = 4, right = 4, top = 4, bottom = 4 }
-    })
-    disabledBarFrame:SetBackdropColor(0.1, 0.1, 0.1, 0.8)
-    disabledBarFrame:SetBackdropBorderColor(0.5, 0.5, 0.5, 0.8)
-    
-    -- Title for disabled bar
-    local disabledTitle = disabledBarFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    disabledTitle:SetPoint("TOP", disabledBarFrame, "TOP", 0, -5)
-    disabledTitle:SetText("Secondary Bar - Drag to move")
-    disabledTitle:SetTextColor(1, 1, 1, 0.5)
-    disabledBarFrame.title = disabledTitle
-    
-    disabledBarFrame.icons = {}
-    
-    -- ===== ADD VISIBILITY LOADING HERE =====
-    -- Load visibility state
-    if ConsumesManagerBar_Settings2.barVisible == nil then
-        -- Default to shown if not saved
-        ConsumesManagerBar_Settings2.barVisible = true
-    end
-    
-    if ConsumesManagerBar_Settings2.disabledBarVisible == nil then
-        -- Default to shown if not saved
-        ConsumesManagerBar_Settings2.disabledBarVisible = true
-    end
-    
-    -- Apply visibility
-    if ConsumesManagerBar_Settings2.barVisible then
-        barFrame:Show()
-    else
-        barFrame:Hide()
-    end
-    
-    if ConsumesManagerBar_Settings2.disabledBarVisible then
-        disabledBarFrame:Show()
-    else
-        disabledBarFrame:Hide()
-    end
-    -- ===== END VISIBILITY LOADING =====
-    
-    -- Load custom priorities
-    ConsumesManagerBar_LoadCustomPriorities()
-    
-    -- Load glow settings
-    ConsumesManagerBar_LoadGlowSettings()
-    
-    -- Load texture cache
-    ConsumesManagerBar_LoadTextureCache()
-    
-    -- Hide titles after a few seconds
-    barFrame:SetScript("OnShow", function()
-        this.title:Show()
-        if disabledBarFrame then
-            disabledBarFrame.title:Show()
-        end
-    end)
-    
-    -- Hide titles after 3 seconds and update periodically
-    barFrame:SetScript("OnUpdate", function()
-        -- Hide main bar title
-        if this.title and this.title:IsVisible() then
-            if not this.hideTime then
-                this.hideTime = GetTime() + 3
-            elseif GetTime() > this.hideTime then
-                this.title:Hide()
-                this.hideTime = nil
-            end
-        end
-        
-        -- Hide disabled bar title
-        if disabledBarFrame and disabledBarFrame.title and disabledBarFrame.title:IsVisible() then
-            if not disabledBarFrame.hideTime then
-                disabledBarFrame.hideTime = GetTime() + 3
-            elseif GetTime() > disabledBarFrame.hideTime then
-                disabledBarFrame.title:Hide()
-                disabledBarFrame.hideTime = nil
-            end
-        end
-        
-        -- Update bars every 0.5 seconds
-        if not this.lastBarUpdate then
-            this.lastBarUpdate = GetTime()
-        end
-        
-        if GetTime() - this.lastBarUpdate > 0.5 then
-            ConsumesManagerBar_UpdateBars()
-            this.lastBarUpdate = GetTime()
-        end
-        
-        -- Periodically refresh textures (every 10 seconds) - SILENTLY
-        if not this.lastTextureRefresh then
-            this.lastTextureRefresh = GetTime()
-        end
-        
-        if GetTime() - this.lastTextureRefresh > 10 then
-            ConsumesManagerBar_RefreshItemTextures() -- This runs silently now
-            this.lastTextureRefresh = GetTime()
-        end
-        
-        -- Update pulse animations every frame
-        ConsumesManagerBar_UpdatePulseAnimation()
-    end)
-    
-    -- Load saved visibility settings (UPDATED VARIABLE NAME)
-    if ConsumesManagerBar_Settings2.iconVisibility then
-        iconVisibility = ConsumesManagerBar_Settings2.iconVisibility
-    else
-        ConsumesManagerBar_Settings2.iconVisibility = {}
-        iconVisibility = ConsumesManagerBar_Settings2.iconVisibility
-    end
-    
-    -- Apply scaling
-    ConsumesManagerBar_ApplyScaling()
-    
-    -- Check if DoiteGlow is available
-    if ConsumesManagerBar_IsGlowAvailable() then
-        DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar loaded! Glow effects enabled (DoiteGlow detected).")
-    else
-        DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar loaded! Glow effects enabled (fallback mode).")
-    end
-    DEFAULT_CHAT_FRAME:AddMessage("Two bars created - both fully functional.")
-end
-
-function ConsumesManagerBar_SavePosition()
-    -- UPDATED VARIABLE NAME
-    if not ConsumesManagerBar_Settings2 then
-        ConsumesManagerBar_Settings2 = {}
-    end
-    
-    -- Save main bar position
-    local barX = barFrame:GetLeft()
-    local barY = barFrame:GetTop()
-    
-    if barX and barY then
-        if not ConsumesManagerBar_Settings2.barPosition then
-            ConsumesManagerBar_Settings2.barPosition = {}
-        end
-        ConsumesManagerBar_Settings2.barPosition.x = barX
-        ConsumesManagerBar_Settings2.barPosition.y = barY
-    end
-    
-    -- Save disabled bar position
-    local disabledBarX = disabledBarFrame:GetLeft()
-    local disabledBarY = disabledBarFrame:GetTop()
-    
-    if disabledBarX and disabledBarY then
-        if not ConsumesManagerBar_Settings2.disabledBarPosition then
-            ConsumesManagerBar_Settings2.disabledBarPosition = {}
-        end
-        ConsumesManagerBar_Settings2.disabledBarPosition.x = disabledBarX
-        ConsumesManagerBar_Settings2.disabledBarPosition.y = disabledBarY
-    end
-    
-    -- Save texture cache when saving position
-    ConsumesManagerBar_SaveTextureCache()
-end
-
-function ConsumesManagerBar_UpdateBars()
-    if not barFrame or not disabledBarFrame then return end
-    
-    -- Update buff tracking first
-    ConsumesManagerBar_UpdateBuffedItems()
-    
-    -- Get current player data
-    local realmName = GetRealmName()
-    local playerName = UnitName("player")
-    
-    if not ConsumesManager_Data or not ConsumesManager_Data[realmName] or not ConsumesManager_Data[realmName][playerName] then
-        barFrame:Hide()
-        disabledBarFrame:Hide()
-        return
-    end
-    
-    local playerData = ConsumesManager_Data[realmName][playerName]
-    local inventory = playerData["inventory"] or {}
-    
-    -- Collect all tracked items
-    local allItems = {}
-    local itemCount = 0
-    
-    if ConsumesManager_SelectedItems then
-        for itemID, isTracked in ConsumesManager_SelectedItems do
-            if isTracked then
-                local count = inventory[itemID] or 0
-                itemCount = itemCount + 1
-                allItems[itemCount] = {
-                    id = itemID,
-                    count = count,
-                    name = consumablesList[itemID] or "Unknown Item",
-                    texture = ConsumesManagerBar_GetItemTexture(itemID), -- Uses cached or dynamic texture
-                    hidden = iconVisibility[itemID], -- true if hidden from main bar
-                    buffed = buffedItems[itemID], -- now stores count (1 for regular buffs, 1-2 for weapon enchants)
-                    timeLeft = buffTimes[itemID], -- remaining time in seconds or nil
-                    effectivePriority = ConsumesManagerBar_GetEffectivePriority(itemID) -- Get effective priority
-                }
-            end
-        end
-    end
-    
-    -- Sort by effective priority then by name using table.sort for predictable ordering
-    table.sort(allItems, function(a, b)
-        -- First sort by effective priority (ascending - lower numbers first)
-        if a.effectivePriority ~= b.effectivePriority then
-            return a.effectivePriority < b.effectivePriority
-        end
-        
-        -- If priorities are equal, sort by name (ascending)
-        local nameA = a.name or ""
-        local nameB = b.name or ""
-        return nameA < nameB
-    end)
-    
-    -- Separate items into enabled and disabled
-    local enabledItems = {}
-    local disabledItems = {}
-    local enabledCount = 0
-    local disabledCount = 0
-    
-    for i = 1, itemCount do
-        local item = allItems[i]
-        if item.hidden then
-            disabledCount = disabledCount + 1
-            disabledItems[disabledCount] = item
-        else
-            enabledCount = enabledCount + 1
-            enabledItems[enabledCount] = item
-        end
-    end
-    
-    -- Update main bar (enabled items)
-    ConsumesManagerBar_UpdateBar(barFrame, enabledItems, enabledCount, false)
-    
-    -- Update secondary bar
-    ConsumesManagerBar_UpdateBar(disabledBarFrame, disabledItems, disabledCount, true)
-    
-    -- Update edit mode UI
-    if editMode then
-        barFrame.editText:Show()
-        barFrame:SetBackdropBorderColor(1, 0.5, 0.5, 0.8) -- Red border in edit mode
-        disabledBarFrame:SetBackdropBorderColor(1, 0.5, 0.5, 0.8) -- Red border in edit mode
-    else
-        barFrame.editText:Hide()
-        barFrame:SetBackdropBorderColor(0.5, 0.5, 0.5, 0.8) -- Normal border
-        disabledBarFrame:SetBackdropBorderColor(0.5, 0.5, 0.5, 0.8) -- Normal border for secondary bar
-    end
-    
-    -- Apply scaling after updating bars
-    ConsumesManagerBar_ApplyScaling()
-    
-    -- Clean up old glow effects
-    ConsumesManagerBar_CleanupGlowEffects()
-end
+-- ============================================================
+-- FORMAT TIME
+-- ============================================================
 
 function ConsumesManagerBar_FormatTime(seconds)
-    if not seconds or seconds < 0 then
-        return ""
-    end
-    
+    if not seconds or seconds < 0 then return "" end
     if seconds > 3600 then
-        -- More than 1 hour: show as Xh Ym
-        local hours = math.floor(seconds / 3600)
-        local minutes = math.floor((seconds - (hours * 3600)) / 60)
-        return hours .. "h " .. minutes .. "m"
+        local h = math.floor(seconds / 3600)
+        local m = math.floor((seconds - h * 3600) / 60)
+        return h .. "h " .. m .. "m"
     elseif seconds > 60 then
-        -- More than 1 minute: show as Xm (no seconds)
-        local minutes = math.floor(seconds / 60)
-        return minutes .. "m"
+        return math.floor(seconds / 60) .. "m"
     else
-        -- Less than 1 minute: show as "<1m" instead of seconds
         return "<1m"
     end
 end
 
-function ConsumesManagerBar_GetBuffDuration(itemID)
-    local buffData = ConsumesManagerBar_GetItemBuffData(itemID)
-    if not buffData or not buffData.spellId or buffData.spellId == 0 then
-        return nil
-    end
-    
-    -- Step 1: Find the buff texture using UnitBuff (we have spellId)
-    local targetTexture = nil
-    for i = 1, 32 do
-        local texture, index, spellId = UnitBuff("player", i)
-        if not texture then break end
-        if spellId and spellId == buffData.spellId then
-            targetTexture = texture
-            break
-        end
-    end
-    
-    if not targetTexture then
-        return nil -- Buff not found via UnitBuff
-    end
-    
-    -- Step 2: Find which GetPlayerBuff slot has this texture
-    for i = 0, 31 do
-        local buffId, cancel = GetPlayerBuff(i, "HELPFUL|HARMFUL|PASSIVE")
-        if buffId >= 0 then
-            local buffTexture = GetPlayerBuffTexture(buffId)
-            if buffTexture and buffTexture == targetTexture then
-                -- Found it! Get the time left
-                local timeLeft = GetPlayerBuffTimeLeft(buffId)
-                if timeLeft and timeLeft > 0 then
-                    return timeLeft
-                end
-                return -1 -- Buff active but no time (weapon enchants)
-            end
-        end
-    end
-    
-    return nil
+-- ============================================================
+-- SCALING
+-- ============================================================
+
+function ConsumesManagerBar_SetScale(newScale)
+    newScale = tonumber(newScale)
+    if not newScale then return end
+    newScale = math.max(0.5, math.min(2.0, newScale))
+    newScale = math.floor(newScale * 100 + 0.5) / 100  -- round to 2dp
+    ConsumesManagerBar_Settings2.scale = newScale
+    ConsumesManagerBar_ApplyScaling()
+    DEFAULT_CHAT_FRAME:AddMessage(
+        "ConsumesManagerBar: Scale set to " .. string.format("%.2f", newScale))
 end
 
-function ConsumesManagerBar_UpdateBar(frame, items, itemCount, isSecondaryBar)
-    -- Clean up old icons if we have more than needed
-    for i = itemCount + 1, table.getn(frame.icons) do
-        if frame.icons[i] then
-            frame.icons[i]:Hide()
-            frame.icons[i] = nil
-        end
-    end
-    
-    -- Remove any pulsing timers for items that are no longer in this bar
-    for i = 1, itemCount do
-        local item = items[i]
-        if item and item.id then
-            -- Keep pulsing timer if this item should pulse
-        else
-            -- Clean up old pulsing timers
-            for itemID, pulseData in pairs(pulsingTimers) do
-                if pulseData.frame and pulseData.frame:GetParent() == frame then
-                    local found = false
-                    for j = 1, itemCount do
-                        if items[j] and items[j].id == itemID then
-                            found = true
-                            break
-                        end
-                    end
-                    if not found then
-                        pulsingTimers[itemID] = nil
-                    end
-                end
-            end
-        end
-    end
-    
-    -- Get current scale
-    local scale = ConsumesManagerBar_Settings2.scale or 1.0
-    local scaledIconSize = ICON_SIZE * scale
-    local scaledIconSpacing = ICON_SPACING * scale
-    
-    -- Update or create icons
-    for i = 1, itemCount do
-        local iconFrame = frame.icons[i]
-        local item = items[i]
-        
-        -- Create icon frame if it doesn't exist
-        if not iconFrame then
-            iconFrame = CreateFrame("Button", frame:GetName().."Icon"..i, frame)
-            iconFrame:SetWidth(scaledIconSize)
-            iconFrame:SetHeight(scaledIconSize)
-            
-            -- Icon texture
-            local icon = iconFrame:CreateTexture(nil, "BACKGROUND")
-            icon:SetAllPoints(iconFrame)
-            iconFrame.icon = icon
-            
-            -- Count text
-            local count = iconFrame:CreateFontString(nil, "OVERLAY", "NumberFontNormalSmall")
-            count:SetPoint("BOTTOMRIGHT", iconFrame, "BOTTOMRIGHT", -2 * scale, 2 * scale)
-            count:SetJustifyH("RIGHT")
-            count:SetAlpha(1.0) -- Start with full opacity
-            iconFrame.count = count
-            
-            -- Time text (top left - NEW POSITION)
-            local timeText = iconFrame:CreateFontString(nil, "OVERLAY", "NumberFontNormalSmall")
-            timeText:SetPoint("TOPLEFT", iconFrame, "TOPLEFT", 2 * scale, -2 * scale)
-            timeText:SetJustifyH("LEFT")
-            timeText:SetTextColor(0, 1, 0) -- White color (CHANGED FROM YELLOW)
-            timeText:SetAlpha(1.0) -- Start with full opacity
-            iconFrame.timeText = timeText
-            
-            -- Move indicator (arrows for edit mode)
-            local moveIndicator = iconFrame:CreateTexture(nil, "OVERLAY")
-            moveIndicator:SetWidth(12 * scale)
-            moveIndicator:SetHeight(12 * scale)
-            moveIndicator:SetPoint("TOPLEFT", iconFrame, "TOPLEFT", -3 * scale, 3 * scale)
-            moveIndicator:SetTexture("Interface\\Buttons\\UI-RadioButton")
-            moveIndicator:Hide()
-            iconFrame.moveIndicator = moveIndicator
+function ConsumesManagerBar_ApplyScaling()
+    local scale  = ConsumesManagerBar_Settings2.scale or 1.0
+    local barH   = BAR_HEIGHT   * scale
+    local icoS   = ICON_SIZE    * scale
+    local icoSp  = ICON_SPACING * scale
 
-            -- Buff highlight - gold border
-            local buffHighlight = iconFrame:CreateTexture(nil, "OVERLAY")
-            buffHighlight:SetWidth(scaledIconSize + 17 * scale)
-            buffHighlight:SetHeight(scaledIconSize + 17 * scale)
-            buffHighlight:SetPoint("CENTER", iconFrame, "CENTER", 0.5, 1)
-            buffHighlight:SetTexture("Interface\\Buttons\\UI-ActionButton-Border")
-            buffHighlight:SetBlendMode("ADD")
-            buffHighlight:SetAlpha(1.0)
-            buffHighlight:SetVertexColor(1, 0.82, 0, 1) -- Gold color
-            buffHighlight:SetDrawLayer("OVERLAY", 7)
-            buffHighlight:Hide()
-            iconFrame.buffHighlight = buffHighlight
-            
-            -- Glow reminder checkbox (above icon in edit mode)
-            local glowCheckbox = CreateFrame("Button", frame:GetName().."GlowCheckbox"..i, iconFrame)
-            glowCheckbox:SetWidth(12 * scale)
-            glowCheckbox:SetHeight(12 * scale)
-            glowCheckbox:SetPoint("BOTTOM", iconFrame, "TOP", 0, 2 * scale)
-            glowCheckbox.itemID = nil
-            
-            -- Checkbox textures
-            glowCheckbox:SetNormalTexture("Interface\\Buttons\\UI-CheckBox-Up")
-            glowCheckbox:SetPushedTexture("Interface\\Buttons\\UI-CheckBox-Down")
-            glowCheckbox:SetHighlightTexture("Interface\\Buttons\\UI-CheckBox-Highlight")
-            
-            -- Checkmark texture for when enabled
-            local checkTexture = glowCheckbox:CreateTexture(nil, "OVERLAY")
-            checkTexture:SetWidth(10 * scale)
-            checkTexture:SetHeight(10 * scale)
-            checkTexture:SetPoint("CENTER", glowCheckbox, "CENTER", 0, 0)
-            checkTexture:SetTexture("Interface\\Buttons\\UI-CheckBox-Check")
-            checkTexture:Hide()
-            glowCheckbox.checkTexture = checkTexture
-            
-            glowCheckbox:SetScript("OnClick", function()
-                if this.itemID then
-                    ConsumesManagerBar_ToggleGlowReminder(this.itemID)
-                end
-            end)
-            
-            glowCheckbox:SetScript("OnEnter", function()
-                if this.itemID then
-                    local itemName = consumablesList[this.itemID] or "Item " .. this.itemID
-                    GameTooltip:SetOwner(this, "ANCHOR_BOTTOM")
-                    GameTooltip:SetText("Glow Reminder")
-                    GameTooltip:AddLine("Click to toggle glow reminder for:", 1, 1, 1)
-                    GameTooltip:AddLine(itemName, 1, 0.82, 0)
-                    
-                    local glowSetting = glowReminders[this.itemID]
-                    if glowSetting == false then
-                        GameTooltip:AddLine("Status: DISABLED (will not glow when buff missing)", 1, 0.3, 0.3)
-                    else
-                        GameTooltip:AddLine("Status: ENABLED (will glow when buff missing)", 0.3, 1, 0.3)
-                    end
-                    
-                    GameTooltip:Show()
-                end
-            end)
-            
-            glowCheckbox:SetScript("OnLeave", function()
-                GameTooltip:Hide()
-            end)
-            
-            glowCheckbox:Hide()
-            iconFrame.glowCheckbox = glowCheckbox
-            
-            -- Left arrow button for reordering
-            local leftArrow = CreateFrame("Button", frame:GetName().."LeftArrow"..i, iconFrame)
-            leftArrow:SetWidth(16 * scale)
-            leftArrow:SetHeight(16 * scale)
-            leftArrow:SetPoint("LEFT", iconFrame, "LEFT", -8 * scale, 0)
-            leftArrow:SetNormalTexture("Interface\\Buttons\\UI-ScrollBar-ScrollUpButton-Up")
-            leftArrow:SetPushedTexture("Interface\\Buttons\\UI-ScrollBar-ScrollUpButton-Down")
-            leftArrow:SetHighlightTexture("Interface\\Buttons\\UI-ScrollBar-ScrollUpButton-Highlight")
-            leftArrow.itemID = nil
-            leftArrow:SetScript("OnClick", function()
-                if this.itemID then
-                    ConsumesManagerBar_MoveItemLeft(this.itemID, isSecondaryBar)
-                end
-            end)
-            leftArrow:Hide()
-            iconFrame.leftArrow = leftArrow
-            
-            -- Right arrow button for reordering
-            local rightArrow = CreateFrame("Button", frame:GetName().."RightArrow"..i, iconFrame)
-            rightArrow:SetWidth(16 * scale)
-            rightArrow:SetHeight(16 * scale)
-            rightArrow:SetPoint("RIGHT", iconFrame, "RIGHT", 8 * scale, 0)
-            rightArrow:SetNormalTexture("Interface\\Buttons\\UI-ScrollBar-ScrollDownButton-Up")
-            rightArrow:SetPushedTexture("Interface\\Buttons\\UI-ScrollBar-ScrollDownButton-Down")
-            rightArrow:SetHighlightTexture("Interface\\Buttons\\UI-ScrollBar-ScrollDownButton-Highlight")
-            rightArrow.itemID = nil
-            rightArrow:SetScript("OnClick", function()
-                if this.itemID then
-                    ConsumesManagerBar_MoveItemRight(this.itemID, isSecondaryBar)
-                end
-            end)
-            rightArrow:Hide()
-            iconFrame.rightArrow = rightArrow
-            
-            -- Cooldown
-            local cooldown = CreateFrame("Frame", frame:GetName().."Cooldown"..i, iconFrame)
-            cooldown:SetAllPoints(iconFrame)
-            cooldown:SetFrameLevel(iconFrame:GetFrameLevel() + 1)
-            iconFrame.cooldown = cooldown
-            
-            -- Tooltip
-            iconFrame:SetScript("OnEnter", function()
-                if this.itemID then
-                    ConsumesManagerBar_ShowTooltip(this, isSecondaryBar)
-                end
-            end)
-            iconFrame:SetScript("OnLeave", function()
-                GameTooltip:Hide()
-            end)
-            
-            -- Click handler
-            iconFrame:SetScript("OnClick", function()
-                if this.itemID then
-                    if editMode then
-                        -- Toggle visibility in edit mode (move between bars)
-                        ConsumesManagerBar_ToggleVisibility(this.itemID)
-                    else
-                        -- Use item in normal mode (works on both bars!)
-                        ConsumesManagerBar_UseItem(this.itemID)
-                    end
-                end
-            end)
-            
-            frame.icons[i] = iconFrame
-        else
-            -- Update existing icon size
-            iconFrame:SetWidth(scaledIconSize)
-            iconFrame:SetHeight(scaledIconSize)
-        end
-        
-        -- Position the icon
-        iconFrame:SetPoint("LEFT", frame, "LEFT", (i-1) * (scaledIconSize + scaledIconSpacing) + scaledIconSpacing, 0)
-        
-        -- Update icon content
-        iconFrame.itemID = item.id
-        iconFrame.icon:SetTexture(item.texture)
-        iconFrame.leftArrow.itemID = item.id
-        iconFrame.rightArrow.itemID = item.id
-        iconFrame.glowCheckbox.itemID = item.id
-        
-        -- Update glow checkbox state
-        local glowSetting = glowReminders[item.id]
-        if glowSetting == false then
-            -- Explicitly disabled - no checkmark
-            iconFrame.glowCheckbox.checkTexture:Hide()
-        else
-            -- Enabled (default nil or explicitly true) - show checkmark
-            iconFrame.glowCheckbox.checkTexture:Show()
-        end
-        
-        -- Update count display - show empty for 0 count
-        if item.count > 0 then
-            if item.count > 1 then
-                iconFrame.count:SetText(item.count)
-            else
-                iconFrame.count:SetText("")
-            end
-        else
-            iconFrame.count:SetText("") -- No count text for 0 items
-        end
-        
-        -- Update time display for buffed items
-        if item.buffed and item.timeLeft then
-            if item.timeLeft == -1 then
-                -- Weapon enchant or unknown duration
-                iconFrame.timeText:SetText("Active")
-                iconFrame.timeText:SetTextColor(0, 1, 0) -- Green for active
-                iconFrame.timeText:SetAlpha(1.0) -- Full opacity
-                -- Count text stays green for active buffs over 60 seconds
-                if iconFrame.count:GetText() ~= "" then
-                    iconFrame.count:SetTextColor(0, 1, 0) -- Green
-                    iconFrame.count:SetAlpha(1.0) -- Full opacity
-                end
-                -- Remove from pulsing timers if it was there
-                pulsingTimers[item.id] = nil
-                -- Ensure buff highlight has normal gold color and full alpha
+    for _, frame in pairs(barFrames) do
+        frame:SetHeight(barH)
+        for i, iconFrame in ipairs(frame.icons) do
+            if iconFrame then
+                iconFrame:SetWidth(icoS)
+                iconFrame:SetHeight(icoS)
+                iconFrame:ClearAllPoints()
+                iconFrame:SetPoint("LEFT", frame, "LEFT",
+                    (i - 1) * (icoS + icoSp) + icoSp, 0)
                 if iconFrame.buffHighlight then
-                    iconFrame.buffHighlight:SetVertexColor(1, 0.82, 0, 1) -- Gold
-                    iconFrame.buffHighlight:SetAlpha(1.0)
+                    iconFrame.buffHighlight:SetWidth(icoS + 17 * scale)
+                    iconFrame.buffHighlight:SetHeight(icoS + 17 * scale)
                 end
-            elseif item.timeLeft > 0 then
-                -- Regular buff with time remaining
-                local timeStr = ConsumesManagerBar_FormatTime(item.timeLeft)
-                iconFrame.timeText:SetText(timeStr)
-                
-                -- Color code based on remaining time
-                if item.timeLeft < 30 then
-                    -- Less than 30 seconds: Red with pulsing
-                    iconFrame.timeText:SetTextColor(1, 0, 0)
-                    -- Count text also red
-                    if iconFrame.count:GetText() ~= "" then
-                        iconFrame.count:SetTextColor(1, 0, 0) -- Red
-                    end
-                    -- Add to pulsing timers with timeLeft info
-                    if not pulsingTimers[item.id] then
-                        pulsingTimers[item.id] = {
-                            frame = iconFrame,
-                            lastUpdate = 0,
-                            direction = 1,
-                            timeLeft = item.timeLeft
-                        }
-                    else
-                        -- Update frame reference and timeLeft
-                        pulsingTimers[item.id].frame = iconFrame
-                        pulsingTimers[item.id].timeLeft = item.timeLeft
-                    end
-                    -- Update buff highlight color to match timer (red)
-                    if iconFrame.buffHighlight then
-                        iconFrame.buffHighlight:SetVertexColor(1, 0.3, 0.3, 1) -- Reddish glow
-                    end
-                elseif item.timeLeft < 120 then
-                    -- Less than 1 minute: Yellow with pulsing
-                    iconFrame.timeText:SetTextColor(1, 0, 0)
-                    -- Count text also yellow
-                    if iconFrame.count:GetText() ~= "" then
-                        iconFrame.count:SetTextColor(1, 1, 0) -- Yellow
-                    end
-                    -- Add to pulsing timers with timeLeft info
-                    if not pulsingTimers[item.id] then
-                        pulsingTimers[item.id] = {
-                            frame = iconFrame,
-                            lastUpdate = 0,
-                            direction = 1,
-                            timeLeft = item.timeLeft
-                        }
-                    else
-                        -- Update frame reference and timeLeft
-                        pulsingTimers[item.id].frame = iconFrame
-                        pulsingTimers[item.id].timeLeft = item.timeLeft
-                    end
-                    -- Update buff highlight color to match timer (yellow/gold)
-                    if iconFrame.buffHighlight then
-                        iconFrame.buffHighlight:SetVertexColor(1, 0.82, 0, 1) -- Gold glow
-                    end
-                else
-                    -- More than 1 minute: white time text, no pulsing
-                    iconFrame.timeText:SetTextColor(1, 1, 0)
-                    iconFrame.timeText:SetAlpha(1.0) -- Full opacity
-                    -- Count text green for buffs over 60 seconds
-                    if iconFrame.count:GetText() ~= "" then
-                        iconFrame.count:SetTextColor(0, 1, 0) -- Green
-                        iconFrame.count:SetAlpha(1.0) -- Full opacity
-                    end
-                    -- Remove from pulsing timers
-                    pulsingTimers[item.id] = nil
-                    -- Ensure buff highlight has normal gold color and full alpha
-                    if iconFrame.buffHighlight then
-                        iconFrame.buffHighlight:SetVertexColor(1, 1, 1, 1) -- white
-                        iconFrame.buffHighlight:SetAlpha(1.0)
-                    end
+                if iconFrame.count then
+                    local fs = math.max(8, math.min(20, math.floor(12 * scale)))
+                    iconFrame.count:SetFont("Fonts\\FRIZQT__.TTF", fs, "THICKOUTLINE")
                 end
-            else
-                -- Buff expired or no time data
-                iconFrame.timeText:SetText("")
-                iconFrame.timeText:SetAlpha(1.0) -- Full opacity
-                -- Count text white (no buff)
-                if iconFrame.count:GetText() ~= "" then
-                    iconFrame.count:SetTextColor(1, 1, 1) -- White
-                    iconFrame.count:SetAlpha(1.0) -- Full opacity
+                if iconFrame.timeText then
+                    local fs = math.max(8, math.min(18, math.floor(10 * scale)))
+                    iconFrame.timeText:SetFont("Fonts\\FRIZQT__.TTF", fs, "THICKOUTLINE")
                 end
-                -- Remove from pulsing timers
-                pulsingTimers[item.id] = nil
-                -- Ensure buff highlight has normal gold color and full alpha
-                if iconFrame.buffHighlight then
-                    iconFrame.buffHighlight:SetVertexColor(1, 0.82, 0, 1) -- Gold
-                    iconFrame.buffHighlight:SetAlpha(1.0)
+                if iconFrame.missingBuffGlow then
+                    iconFrame.missingBuffGlow:SetWidth(icoS + 8 * scale)
+                    iconFrame.missingBuffGlow:SetHeight(icoS + 8 * scale)
                 end
-            end
-        else
-            -- Not buffed
-            iconFrame.timeText:SetText("")
-            iconFrame.timeText:SetAlpha(1.0) -- Full opacity
-            -- Count text white (no buff)
-            if iconFrame.count:GetText() ~= "" then
-                iconFrame.count:SetTextColor(1, 1, 1) -- White
-                iconFrame.count:SetAlpha(1.0) -- Full opacity
-            end
-            -- Remove from pulsing timers
-            pulsingTimers[item.id] = nil
-        end
-        
-        -- Update appearance based on whether item is available and buffed
-        if item.buffed then
-            -- Item is currently buffed - highlight with glowing border
-            iconFrame.icon:SetDesaturated(false)
-            
-            -- Check if it's a weapon enchant with both weapons
-            local buffData = ConsumesManagerBar_GetItemBuffData(item.id)
-            if buffData and buffData.weaponEnchantName then
-                -- It's a weapon enchant item
-                local _, enchantCount = ConsumesManagerBar_HasWeaponEnchant(item.id)
-                if enchantCount == 2 then
-                    -- Both weapons enchanted - BRIGHT GREEN
-                    if iconFrame.buffHighlight then
-                        iconFrame.buffHighlight:SetVertexColor(0, 1, 0, 1) -- Bright green
-                        iconFrame.buffHighlight:Show()
-                    end
-                else
-                    -- One weapon enchanted or regular buff - show highlight
-                    if iconFrame.buffHighlight then
-                        -- Color already set above based on timer
-                        iconFrame.buffHighlight:Show()
-                    end
-                end
-            else
-                -- Regular buff - show highlight with appropriate color
-                if iconFrame.buffHighlight then
-                    -- Color already set above based on timer
-                    iconFrame.buffHighlight:Show()
-                end
-            end
-        elseif item.count > 0 then
-            -- Item is available but not buffed - normal appearance
-            iconFrame.icon:SetDesaturated(false)
-            if iconFrame.buffHighlight then
-                iconFrame.buffHighlight:Hide()
-            end
-        else
-            -- Item is not available - greyed out
-            iconFrame.icon:SetDesaturated(true)
-            -- Count text grey when no items available
-            if iconFrame.count:GetText() ~= "" then
-                iconFrame.count:SetTextColor(0.5, 0.5, 0.5) -- Grey
-                iconFrame.count:SetAlpha(1.0) -- Full opacity
-            end
-            if iconFrame.buffHighlight then
-                iconFrame.buffHighlight:Hide()
             end
         end
-        
-        -- Show/hide move indicator, arrows, and glow checkbox based on edit mode
-        if editMode then
-            if iconFrame.moveIndicator then
-                iconFrame.moveIndicator:Show()
-            end
-            if iconFrame.leftArrow then
-                iconFrame.leftArrow:Show()
-            end
-            if iconFrame.rightArrow then
-                iconFrame.rightArrow:Show()
-            end
-            if iconFrame.glowCheckbox then
-                iconFrame.glowCheckbox:Show()
-            end
-        else
-            if iconFrame.moveIndicator then
-                iconFrame.moveIndicator:Hide()
-            end
-            if iconFrame.leftArrow then
-                iconFrame.leftArrow:Hide()
-            end
-            if iconFrame.rightArrow then
-                iconFrame.rightArrow:Hide()
-            end
-            if iconFrame.glowCheckbox then
-                iconFrame.glowCheckbox:Hide()
-            end
+        if table.getn(frame.icons) > 0 then
+            local n = table.getn(frame.icons)
+            frame:SetWidth(n * (icoS + icoSp) + icoSp)
         end
-        
-        -- Simple cooldown handling
-        local start, duration = GetContainerItemCooldown(0, 1)
-        
-        -- Update glow effect for missing buffs
-        ConsumesManagerBar_UpdateGlowForIcon(iconFrame, item)
-        
-        iconFrame:Show()
     end
-    
-    -- Adjust bar width based on number of items
-    if itemCount > 0 then
-        local newWidth = (itemCount * (scaledIconSize + scaledIconSpacing)) + scaledIconSpacing
-        frame:SetWidth(newWidth)
-        frame:Show()
+end
+
+-- ============================================================
+-- POSITION SAVE
+-- ============================================================
+
+function ConsumesManagerBar_SaveAllPositions()
+    for _, bar in ipairs(GetBars()) do
+        local f = barFrames[bar.id]
+        if f then
+            local x, y = f:GetLeft(), f:GetTop()
+            if x and y then bar.position = { x = x, y = y } end
+        end
+    end
+    ConsumesManagerBar_SaveTextureCache()
+end
+
+-- ============================================================
+-- MOUSEOVER MODE
+-- ============================================================
+
+function ConsumesManagerBar_SetAllBarsAlpha(alpha)
+    -- Edit mode always keeps bars visible regardless of mouseover state
+    if editMode then alpha = 1 end
+    for _, f in pairs(barFrames) do f:SetAlpha(alpha) end
+end
+
+local function IsMouseOver(frame)
+    if not frame or not frame:IsShown() then return false end
+    local mx, my = GetCursorPosition()
+    local s = UIParent:GetEffectiveScale()
+    mx, my = mx / s, my / s
+    local l, r, b, t = frame:GetLeft(), frame:GetRight(), frame:GetBottom(), frame:GetTop()
+    return l and mx >= l and mx <= r and my >= b and my <= t
+end
+
+-- Per-bar invisible hit frames for mouseover detection.
+-- Each bar gets its own hit frame sized to match that bar exactly.
+-- Hovering any hit frame shows ALL bars; leaving all of them hides them.
+local mouseoverHitFrames = {}
+
+function ConsumesManagerBar_CheckMouseoverHide()
+    -- Still over any real bar frame?
+    for _, f in pairs(barFrames) do
+        if f:IsShown() and IsMouseOver(f) then return end
+    end
+    -- Still over any per-bar hit frame?
+    for _, hf in pairs(mouseoverHitFrames) do
+        if hf:IsShown() and IsMouseOver(hf) then return end
+    end
+    mouseoverVisible = false
+    ConsumesManagerBar_SetAllBarsAlpha(0)
+end
+
+function ConsumesManagerBar_ApplyMouseoverMode()
+    mouseoverMode = ConsumesManagerBar_Settings2.mouseoverMode or false
+    if mouseoverMode then
+        if not mouseoverVisible then ConsumesManagerBar_SetAllBarsAlpha(0) end
+        ConsumesManagerBar_UpdateMouseoverHitFrame()
     else
-        frame:Hide()
+        ConsumesManagerBar_SetAllBarsAlpha(1)
+        mouseoverVisible = false
+        -- Hide all per-bar hit frames
+        for _, hf in pairs(mouseoverHitFrames) do hf:Hide() end
     end
 end
 
-function ConsumesManagerBar_MoveItemLeft(itemID, isSecondaryBar)
-    -- Get all items in the current bar
-    local allItems = {}
-    local itemCount = 0
-    
-    if ConsumesManager_SelectedItems then
-        for id, isTracked in ConsumesManager_SelectedItems do
-            if isTracked then
-                if (isSecondaryBar and iconVisibility[id]) or (not isSecondaryBar and not iconVisibility[id]) then
-                    itemCount = itemCount + 1
-                    allItems[itemCount] = {
-                        id = id,
-                        effectivePriority = ConsumesManagerBar_GetEffectivePriority(id)
-                    }
+-- No-op kept for call-sites that reference the old single-frame version
+function ConsumesManagerBar_CreateMouseoverHitFrame() end
+
+function ConsumesManagerBar_UpdateMouseoverHitFrame()
+    if not mouseoverMode then
+        for _, hf in pairs(mouseoverHitFrames) do hf:Hide() end
+        return
+    end
+    local pad = 6
+
+    -- Create/update one hit frame per bar, sized to that bar exactly
+    for barID, barFrame in pairs(barFrames) do
+        if not mouseoverHitFrames[barID] then
+            local hf = CreateFrame("Frame",
+                "ConsumesManagerBarHitFrame_" .. barID, UIParent)
+            hf:SetFrameStrata("LOW")
+            hf:SetAlpha(0)
+            hf:EnableMouse(true)
+            hf:SetScript("OnEnter", function()
+                if mouseoverMode then
+                    mouseoverVisible = true
+                    ConsumesManagerBar_SetAllBarsAlpha(1)
                 end
-            end
+            end)
+            hf:SetScript("OnLeave", function()
+                if mouseoverMode then ConsumesManagerBar_CheckMouseoverHide() end
+            end)
+            mouseoverHitFrames[barID] = hf
+        end
+
+        local hf = mouseoverHitFrames[barID]
+        local l = barFrame:GetLeft()
+        if l and barFrame:IsShown() then
+            local r = barFrame:GetRight()
+            local b = barFrame:GetBottom()
+            local t = barFrame:GetTop()
+            hf:ClearAllPoints()
+            hf:SetPoint("TOPLEFT",     UIParent, "BOTTOMLEFT", l - pad, t + pad)
+            hf:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMLEFT", r + pad, b - pad)
+            hf:Show()
+        else
+            hf:Hide()
         end
     end
-    
-    -- Sort by effective priority
-    table.sort(allItems, function(a, b)
-        return a.effectivePriority < b.effectivePriority
-    end)
-    
-    -- Find the current position of the item
-    local currentPos = nil
-    for i = 1, itemCount do
-        if allItems[i].id == itemID then
-            currentPos = i
-            break
-        end
-    end
-    
-    -- Can't move left if already at position 1
-    if currentPos and currentPos > 1 then
-        -- Get the item to swap with
-        local swapItemID = allItems[currentPos - 1].id
-        
-        -- Get current priorities
-        local currentPriority = ConsumesManagerBar_GetEffectivePriority(itemID)
-        local swapPriority = ConsumesManagerBar_GetEffectivePriority(swapItemID)
-        
-        -- Swap priorities (create custom priorities for both if needed)
-        ConsumesManagerBar_SetCustomPriority(itemID, swapPriority)
-        ConsumesManagerBar_SetCustomPriority(swapItemID, currentPriority)
-        
-        -- Update bars
-        ConsumesManagerBar_UpdateBars()
-        DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar: Moved item left.")
+
+    -- Hide hit frames for bars that no longer exist
+    for barID, hf in pairs(mouseoverHitFrames) do
+        if not barFrames[barID] then hf:Hide() end
     end
 end
 
-function ConsumesManagerBar_MoveItemRight(itemID, isSecondaryBar)
-    -- Get all items in the current bar
-    local allItems = {}
-    local itemCount = 0
-    
-    if ConsumesManager_SelectedItems then
-        for id, isTracked in ConsumesManager_SelectedItems do
-            if isTracked then
-                if (isSecondaryBar and iconVisibility[id]) or (not isSecondaryBar and not iconVisibility[id]) then
-                    itemCount = itemCount + 1
-                    allItems[itemCount] = {
-                        id = id,
-                        effectivePriority = ConsumesManagerBar_GetEffectivePriority(id)
-                    }
-                end
-            end
-        end
-    end
-    
-    -- Sort by effective priority
-    table.sort(allItems, function(a, b)
-        return a.effectivePriority < b.effectivePriority
-    end)
-    
-    -- Find the current position of the item
-    local currentPos = nil
-    for i = 1, itemCount do
-        if allItems[i].id == itemID then
-            currentPos = i
-            break
-        end
-    end
-    
-    -- Can't move right if already at the last position
-    if currentPos and currentPos < itemCount then
-        -- Get the item to swap with
-        local swapItemID = allItems[currentPos + 1].id
-        
-        -- Get current priorities
-        local currentPriority = ConsumesManagerBar_GetEffectivePriority(itemID)
-        local swapPriority = ConsumesManagerBar_GetEffectivePriority(swapItemID)
-        
-        -- Swap priorities (create custom priorities for both if needed)
-        ConsumesManagerBar_SetCustomPriority(itemID, swapPriority)
-        ConsumesManagerBar_SetCustomPriority(swapItemID, currentPriority)
-        
-        -- Update bars
-        ConsumesManagerBar_UpdateBars()
-        DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar: Moved item right.")
-    end
-end
-
-function ConsumesManagerBar_ToggleVisibility(itemID)
-    -- Toggle HIDDEN state for this item (true = hidden from main bar, false/nil = visible on main bar)
-    if iconVisibility[itemID] then
-        iconVisibility[itemID] = nil
+function ConsumesManagerBar_ToggleMouseoverMode()
+    ConsumesManagerBar_Settings2.mouseoverMode =
+        not (ConsumesManagerBar_Settings2.mouseoverMode or false)
+    ConsumesManagerBar_ApplyMouseoverMode()
+    if ConsumesManagerBar_Settings2.mouseoverMode then
+        DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar: Mouseover mode ON.")
     else
-        iconVisibility[itemID] = true
+        DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar: Mouseover mode OFF.")
     end
-    
-    -- Save visibility settings (UPDATED VARIABLE NAME)
-    ConsumesManagerBar_Settings2.iconVisibility = iconVisibility
-    
-    -- Update the bars to reflect changes
+end
+
+-- ============================================================
+-- BAR FRAME CREATION
+-- ============================================================
+
+local function CreateBarFrameForBar(bar)
+    local scale  = ConsumesManagerBar_Settings2.scale or 1.0
+    local name   = "ConsumesManagerBarFrame_" .. bar.id
+
+    -- Reuse existing WoW frame if it already exists (e.g. on reload)
+    local f = CreateFrame("Frame", name, UIParent)
+    f:SetHeight(BAR_HEIGHT * scale)
+    f:SetWidth(40)
+    f.barID = bar.id
+    f.icons = {}
+
+    if bar.position then
+        f:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT",
+            bar.position.x, bar.position.y)
+    else
+        -- Default: stack bars in the center of screen, spaced vertically
+        local idx = 0
+        for i, b in ipairs(GetBars()) do
+            if b.id == bar.id then idx = i - 1; break end
+        end
+        f:SetPoint("CENTER", UIParent, "CENTER", 0, idx * -55)
+    end
+
+    f:SetFrameStrata("MEDIUM")
+    f:SetMovable(true)
+    f:EnableMouse(true)
+    f:RegisterForDrag("LeftButton")
+    f:SetScript("OnDragStart", function() this:StartMoving() end)
+    f:SetScript("OnDragStop", function()
+        this:StopMovingOrSizing()
+        ConsumesManagerBar_SaveAllPositions()
+        ConsumesManagerBar_UpdateMouseoverHitFrame()
+    end)
+
+    f:SetBackdrop({
+        bgFile   = "Interface\\Tooltips\\UI-Tooltip-Background",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 16,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 }
+    })
+    f:SetBackdropColor(0.1, 0.1, 0.1, 0.8)
+    f:SetBackdropBorderColor(0.5, 0.5, 0.5, 0.8)
+
+    -- Mouseover passthrough
+    f:SetScript("OnEnter", function()
+        if mouseoverMode then
+            mouseoverVisible = true
+            ConsumesManagerBar_SetAllBarsAlpha(1)
+        end
+    end)
+    f:SetScript("OnLeave", function()
+        if mouseoverMode then ConsumesManagerBar_CheckMouseoverHide() end
+    end)
+
+    return f
+end
+
+-- ============================================================
+-- PUBLIC ACCESSORS
+-- ============================================================
+
+-- Expose bar data and frames for the Settings UI
+function ConsumesManagerBar_GetBars()
+    return GetBars()
+end
+
+function ConsumesManagerBar_GetBarFrames()
+    return barFrames
+end
+
+-- ============================================================
+-- PUBLIC BAR MANAGEMENT
+-- ============================================================
+
+function ConsumesManagerBar_AddBar(name)
+    local bars = GetBars()
+    -- Generate a unique ID
+    local suffix = table.getn(bars) + 1
+    local newID
+    repeat
+        newID = "bar" .. suffix
+        local collision = false
+        for _, b in ipairs(bars) do
+            if b.id == newID then collision = true; break end
+        end
+        if collision then suffix = suffix + 1 else break end
+    until false
+
+    local newBar = { id = newID, name = name or ("Bar " .. suffix) }
+    table.insert(bars, newBar)
+
+    local f = CreateBarFrameForBar(newBar)
+    barFrames[newID] = f
+
+    ConsumesManagerBar_UpdateBars()
+    DEFAULT_CHAT_FRAME:AddMessage(
+        "ConsumesManagerBar: Added bar \"" .. newBar.name .. "\".")
+    return newID
+end
+
+function ConsumesManagerBar_DeleteBar(barID)
+    local bars = GetBars()
+    if table.getn(bars) <= 1 then
+        DEFAULT_CHAT_FRAME:AddMessage(
+            "ConsumesManagerBar: Cannot delete the only bar.")
+        return
+    end
+    if barID == bars[1].id then
+        DEFAULT_CHAT_FRAME:AddMessage(
+            "ConsumesManagerBar: Cannot delete the first bar. Rename it if needed.")
+        return
+    end
+    -- Move all items on this bar back to bar 1
+    if ConsumesManagerBar_Settings2.itemBar then
+        for itemID, assignedID in pairs(ConsumesManagerBar_Settings2.itemBar) do
+            if assignedID == barID then
+                ConsumesManagerBar_Settings2.itemBar[itemID] = nil
+            end
+        end
+    end
+    -- Remove from list
+    for i, b in ipairs(bars) do
+        if b.id == barID then table.remove(bars, i); break end
+    end
+    -- Hide and discard frame and its orphaned swap buttons
+    if barFrames[barID] then
+        local bf = barFrames[barID]
+        if bf.swapBtns then
+            for _, sb in pairs(bf.swapBtns) do
+                if sb then sb:Hide() end
+            end
+        end
+        bf:Hide()
+        barFrames[barID] = nil
+    end
     ConsumesManagerBar_UpdateBars()
 end
 
+function ConsumesManagerBar_RenameBar(barID, newName)
+    newName = newName or ""
+    if newName == "" then return end
+    for _, bar in ipairs(GetBars()) do
+        if bar.id == barID then
+            bar.name = newName
+            break
+        end
+    end
+end
+
+function ConsumesManagerBar_SetBarHidden(barID, hidden)
+    for _, bar in ipairs(GetBars()) do
+        if bar.id == barID then
+            bar.hidden = hidden or nil  -- nil to keep saved vars clean
+            break
+        end
+    end
+    ConsumesManagerBar_UpdateBars()
+end
+
+function ConsumesManagerBar_IsBarHidden(barID)
+    for _, bar in ipairs(GetBars()) do
+        if bar.id == barID then
+            return bar.hidden == true
+        end
+    end
+    return false
+end
+
+function ConsumesManagerBar_MoveItemToBar(itemID, targetBarID)
+    SetItemBarID(itemID, targetBarID)
+    ConsumesManagerBar_UpdateBars()
+end
+
+-- ============================================================
+-- CONTEXT MENU
+-- ============================================================
+
+local function HideContextMenu()
+    if contextMenuFrame then contextMenuFrame:Hide() end
+end
+
+local function ShowBarContextMenu(iconFrame, itemID)
+    HideContextMenu()
+
+    if not contextMenuFrame then
+        contextMenuFrame = CreateFrame(
+            "Frame", "ConsumesManagerBarContextMenu", UIParent)
+        contextMenuFrame:SetFrameStrata("TOOLTIP")
+        contextMenuFrame:SetBackdrop({
+            bgFile   = "Interface\\Tooltips\\UI-Tooltip-Background",
+            edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+            tile = true, tileSize = 16, edgeSize = 16,
+            insets = { left = 4, right = 4, top = 4, bottom = 4 }
+        })
+        contextMenuFrame:SetBackdropColor(0.05, 0.05, 0.05, 0.95)
+        contextMenuFrame:SetBackdropBorderColor(0.6, 0.6, 0.6, 1)
+        contextMenuFrame:EnableMouse(true)
+    end
+
+    -- Clear old buttons by hiding them
+    if contextMenuFrame.buttons then
+        for _, btn in ipairs(contextMenuFrame.buttons) do btn:Hide() end
+    end
+    if contextMenuFrame.labels then
+        for _, lbl in ipairs(contextMenuFrame.labels) do lbl:Hide() end
+    end
+    if contextMenuFrame.dividers then
+        for _, div in ipairs(contextMenuFrame.dividers) do div:Hide() end
+    end
+    contextMenuFrame.buttons  = {}
+    contextMenuFrame.labels   = {}
+    contextMenuFrame.dividers = {}
+
+    local bars        = GetBars()
+    local currentBarID = GetItemBarID(itemID)
+    local menuW       = 170
+    local btnH        = 20
+    local yOff        = -8
+
+    -- Header
+    local header = contextMenuFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    header:SetPoint("TOPLEFT", contextMenuFrame, "TOPLEFT", 10, yOff)
+    header:SetTextColor(1, 0.82, 0)
+    header:SetText("Move to bar:")
+    table.insert(contextMenuFrame.labels, header)
+    yOff = yOff - btnH
+
+    -- One button per bar
+    for idx, bar in ipairs(bars) do
+        local captureBar = bar   -- proper closure
+        local btn = CreateFrame("Button", nil, contextMenuFrame)
+        btn:SetWidth(menuW - 16)
+        btn:SetHeight(btnH)
+        btn:SetPoint("TOPLEFT", contextMenuFrame, "TOPLEFT", 8, yOff)
+        btn:EnableMouse(true)
+
+        local hl = btn:CreateTexture(nil, "BACKGROUND")
+        hl:SetAllPoints(btn)
+        hl:SetTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight")
+        hl:SetBlendMode("ADD")
+        hl:SetAlpha(0)
+
+        local lbl = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        lbl:SetPoint("LEFT", btn, "LEFT", 4, 0)
+        lbl:SetJustifyH("LEFT")
+        if captureBar.id == currentBarID then
+            lbl:SetText("|cff44ff44" .. captureBar.name .. " \226\156\147|r")
+        else
+            lbl:SetText(captureBar.name)
+        end
+
+        btn:SetScript("OnEnter", function() hl:SetAlpha(0.3) end)
+        btn:SetScript("OnLeave", function() hl:SetAlpha(0)   end)
+        btn:SetScript("OnClick", function()
+            ConsumesManagerBar_MoveItemToBar(itemID, captureBar.id)
+            HideContextMenu()
+        end)
+
+        table.insert(contextMenuFrame.buttons, btn)
+        yOff = yOff - btnH
+    end
+
+    -- Divider
+    yOff = yOff - 4
+    local div = contextMenuFrame:CreateTexture(nil, "OVERLAY")
+    div:SetHeight(1)
+    div:SetWidth(menuW - 16)
+    div:SetPoint("TOPLEFT", contextMenuFrame, "TOPLEFT", 8, yOff)
+    div:SetTexture(0.5, 0.5, 0.5, 0.5)
+    table.insert(contextMenuFrame.dividers, div)
+    yOff = yOff - 6
+
+    -- Glow toggle
+    local glowBtn = CreateFrame("Button", nil, contextMenuFrame)
+    glowBtn:SetWidth(menuW - 16)
+    glowBtn:SetHeight(btnH)
+    glowBtn:SetPoint("TOPLEFT", contextMenuFrame, "TOPLEFT", 8, yOff)
+    glowBtn:EnableMouse(true)
+
+    local glowHl = glowBtn:CreateTexture(nil, "BACKGROUND")
+    glowHl:SetAllPoints(glowBtn)
+    glowHl:SetTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight")
+    glowHl:SetBlendMode("ADD")
+    glowHl:SetAlpha(0)
+
+    local glowLbl = glowBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    glowLbl:SetPoint("LEFT", glowBtn, "LEFT", 4, 0)
+    glowLbl:SetJustifyH("LEFT")
+    if glowReminders[itemID] == false then
+        glowLbl:SetText("|cffff6666Glow: OFF|r \226\128\148 click to enable")
+    else
+        glowLbl:SetText("|cff66ff66Glow: ON|r \226\128\148 click to disable")
+    end
+
+    glowBtn:SetScript("OnEnter", function() glowHl:SetAlpha(0.3) end)
+    glowBtn:SetScript("OnLeave", function() glowHl:SetAlpha(0)   end)
+    glowBtn:SetScript("OnClick", function()
+        ConsumesManagerBar_ToggleGlowReminder(itemID)
+        HideContextMenu()
+    end)
+    table.insert(contextMenuFrame.buttons, glowBtn)
+    yOff = yOff - btnH - 8
+
+    contextMenuFrame:SetWidth(menuW)
+    contextMenuFrame:SetHeight(math.abs(yOff) + 4)
+
+    -- Position: prefer above the icon, flip if it would go off-screen
+    local iconTop  = iconFrame:GetTop()  or 0
+    local menuH    = math.abs(yOff) + 4
+    if iconTop - menuH < 0 then
+        contextMenuFrame:SetPoint("BOTTOMLEFT", iconFrame, "TOPRIGHT", 0, 0)
+    else
+        contextMenuFrame:SetPoint("TOPLEFT", iconFrame, "TOPRIGHT", 0, 0)
+    end
+    contextMenuFrame:Show()
+
+    -- Register so ESC closes it
+    tinsert(UISpecialFrames, "ConsumesManagerBarContextMenu")
+
+    -- Only close once the cursor has entered the menu at least once.
+    -- This prevents instant-close when the menu opens under/beside the cursor.
+    local hasEntered = false
+    local closePad = 8
+    contextMenuFrame:SetScript("OnLeave", nil)
+    contextMenuFrame:SetScript("OnUpdate", function()
+        if not this:IsShown() then return end
+        local mx, my = GetCursorPosition()
+        local s = UIParent:GetEffectiveScale()
+        mx, my = mx / s, my / s
+        local l = this:GetLeft()
+        if not l then return end
+        local r = this:GetRight()
+        local b = this:GetBottom()
+        local t = this:GetTop()
+        local inside = mx >= l - closePad and mx <= r + closePad and
+                       my >= b - closePad and my <= t + closePad
+        if inside then
+            hasEntered = true
+        elseif hasEntered then
+            this:Hide()
+        end
+    end)
+end
+
+-- ============================================================
+-- REORDERING WITHIN A BAR
+-- ============================================================
+
+local function GetBarItemsSorted(barID)
+    local result = {}
+    if ConsumesManager_SelectedItems then
+        for id, isTracked in ConsumesManager_SelectedItems do
+            if isTracked and GetItemBarID(id) == barID then
+                table.insert(result, {
+                    id = id,
+                    effectivePriority = ConsumesManagerBar_GetEffectivePriority(id)
+                })
+            end
+        end
+    end
+    table.sort(result, function(a, b)
+        return a.effectivePriority < b.effectivePriority
+    end)
+    return result
+end
+
+function ConsumesManagerBar_MoveItemLeft(itemID, barID)
+    local items = GetBarItemsSorted(barID)
+    for i, entry in ipairs(items) do
+        if entry.id == itemID and i > 1 then
+            local swapID = items[i - 1].id
+            local pA = ConsumesManagerBar_GetEffectivePriority(itemID)
+            local pB = ConsumesManagerBar_GetEffectivePriority(swapID)
+            customPriorities[itemID] = pB
+            customPriorities[swapID] = pA
+            ConsumesManagerBar_SaveCustomPriorities()
+            ConsumesManagerBar_UpdateBars()
+            return
+        end
+    end
+end
+
+function ConsumesManagerBar_MoveItemRight(itemID, barID)
+    local items = GetBarItemsSorted(barID)
+    local n = table.getn(items)
+    for i, entry in ipairs(items) do
+        if entry.id == itemID and i < n then
+            local swapID = items[i + 1].id
+            local pA = ConsumesManagerBar_GetEffectivePriority(itemID)
+            local pB = ConsumesManagerBar_GetEffectivePriority(swapID)
+            customPriorities[itemID] = pB
+            customPriorities[swapID] = pA
+            ConsumesManagerBar_SaveCustomPriorities()
+            ConsumesManagerBar_UpdateBars()
+            return
+        end
+    end
+end
+
+-- ============================================================
+-- USE ITEM
+-- ============================================================
+
 function ConsumesManagerBar_UseItem(itemID)
-    -- Store target state before using item
-    local hadTarget = UnitExists("target")
+    local hadTarget          = UnitExists("target")
     local wasTargetingPlayer = UnitIsUnit("player", "target")
     TargetUnit("player")
     local bag, slot = ConsumesManager_FindItemInBags(itemID)
@@ -1793,270 +1040,705 @@ function ConsumesManagerBar_UseItem(itemID)
     else
         DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar: Item not found in bags.")
     end
-    
-    -- Restore previous target if needed
     if hadTarget and not wasTargetingPlayer then
-        -- Restore the original target
         TargetLastTarget()
     elseif not hadTarget then
-        -- Clear target if we had none originally
         ClearTarget()
     end
 end
 
-function ConsumesManagerBar_ShowTooltip(iconFrame, isSecondaryBar)
+-- ============================================================
+-- TOOLTIP
+-- ============================================================
+
+function ConsumesManagerBar_ShowTooltip(iconFrame, barID)
     GameTooltip:SetOwner(iconFrame, "ANCHOR_RIGHT")
-    
-    -- Use item ID to show tooltip
     local itemName = consumablesList[iconFrame.itemID]
-    if itemName then
-        GameTooltip:SetText(itemName)
-        
-        -- Get the actual count from inventory data
-        local realmName = GetRealmName()
-        local playerName = UnitName("player")
-        local count = 0
-        
-        if ConsumesManager_Data and ConsumesManager_Data[realmName] and ConsumesManager_Data[realmName][playerName] then
-            local inventory = ConsumesManager_Data[realmName][playerName]["inventory"] or {}
-            count = inventory[iconFrame.itemID] or 0
-        end
-        
-        if count > 0 then
-            GameTooltip:AddLine("Count: " .. count, 1, 1, 1)
-        else
-            GameTooltip:AddLine("Count: 0 (Not in bags)", 1, 0.5, 0.5)
-        end
-        
-        -- Show priority information
-        local defaultPriority = ConsumesManagerBar_GetItemBuffData(iconFrame.itemID).priority or 99
-        local effectivePriority = ConsumesManagerBar_GetEffectivePriority(iconFrame.itemID)
-        
-        if customPriorities[iconFrame.itemID] then
-            GameTooltip:AddLine("Priority: " .. effectivePriority .. " (Custom)", 0.5, 1, 0.5)
-            GameTooltip:AddLine("Default Priority: " .. defaultPriority, 0.7, 0.7, 0.7)
-        else
-            GameTooltip:AddLine("Priority: " .. effectivePriority .. " (Default)", 1, 1, 1)
-        end
-        
-        -- Show glow reminder status
-        local glowStatus = glowReminders[iconFrame.itemID]
-        if glowStatus == false then
-            GameTooltip:AddLine("Glow Reminder: DISABLED", 1, 0.3, 0.3)
-        else
-            GameTooltip:AddLine("Glow Reminder: ENABLED", 0.3, 1, 0.3)
-        end
-        
-        -- Show buff status with time info
-        if buffedItems[iconFrame.itemID] then
-            local buffCount = buffedItems[iconFrame.itemID]
-            local timeLeft = buffTimes[iconFrame.itemID]
-            
-            if buffCount == 2 then
-                GameTooltip:AddLine("Currently Active (Both Weapons)", 0, 1, 0) -- Bright green
-            else
-                GameTooltip:AddLine("Currently Active", 0, 1, 0) -- Green
-            end
-            
-            -- Add time information if available
-            if timeLeft and timeLeft > 0 then
-                local timeStr = ConsumesManagerBar_FormatTime(timeLeft)
-                if timeStr ~= "" then
-                    GameTooltip:AddLine("Time Left: " .. timeStr, 1, 1, 0.5) -- Yellow
-                end
-            elseif timeLeft == -1 then
-                GameTooltip:AddLine("Duration: Weapon Enchant", 0.8, 0.8, 0.8) -- Gray
-            end
-        else
-            -- Item is not buffed - show this prominently
-            if count > 0 then
-                if glowStatus == false then
-                    GameTooltip:AddLine("NOT BUFFED (Glow disabled)", 0.7, 0.7, 0.7)
-                else
-                    GameTooltip:AddLine("NOT BUFFED - Click to use", 1, 0.3, 0.3) -- Red warning
-                end
-            else
-                GameTooltip:AddLine("Not available in bags", 0.7, 0.7, 0.7)
-            end
-        end
-        
-        if editMode then
-            if isSecondaryBar then
-                GameTooltip:AddLine("Click to move to main bar", 0.5, 1, 0.5)
-            else
-                GameTooltip:AddLine("Click to move to secondary bar", 0.5, 1, 0.5)
-            end
-            GameTooltip:AddLine("Use left/right arrows to change order", 0.8, 0.8, 0.8)
-            GameTooltip:AddLine("Click checkbox above to toggle glow reminder", 0.8, 0.8, 0.8)
-        else
-            if count > 0 then
-                if buffedItems[iconFrame.itemID] then
-                    GameTooltip:AddLine("Click to refresh buff", 0.5, 1, 0.5)
-                else
-                    GameTooltip:AddLine("Click to apply buff", 0.5, 1, 0.5)
-                end
-            else
-                GameTooltip:AddLine("Item not available", 1, 0.5, 0.5)
-            end
-            if isSecondaryBar then
-                GameTooltip:AddLine("(Secondary Bar)", 0.7, 0.7, 0.7)
-            else
-                GameTooltip:AddLine("(Main Bar)", 0.7, 0.7, 0.7)
-            end
-        end
-        
-        GameTooltip:Show()
-    else
+    if not itemName then
         GameTooltip:SetText("Unknown Item (ID: " .. tostring(iconFrame.itemID) .. ")")
-        GameTooltip:AddLine("Item data not found", 1, 0.5, 0.5)
         GameTooltip:Show()
+        return
     end
+
+    GameTooltip:SetText(itemName)
+
+    -- Count
+    local realmName  = GetRealmName()
+    local playerName = UnitName("player")
+    local count = 0
+    if ConsumesManager_Data and ConsumesManager_Data[realmName] and
+       ConsumesManager_Data[realmName][playerName] then
+        local inv = ConsumesManager_Data[realmName][playerName]["inventory"] or {}
+        count = inv[iconFrame.itemID] or 0
+    end
+    if count > 0 then
+        GameTooltip:AddLine("Count: " .. count, 1, 1, 1)
+    else
+        GameTooltip:AddLine("Count: 0 (Not in bags)", 1, 0.5, 0.5)
+    end
+
+    -- Which bar
+    local currentBarID = GetItemBarID(iconFrame.itemID)
+    local barName = "Unknown"
+    for _, bar in ipairs(GetBars()) do
+        if bar.id == currentBarID then barName = bar.name; break end
+    end
+    GameTooltip:AddLine("Bar: " .. barName, 0.7, 0.7, 0.7)
+
+    -- Glow
+    if glowReminders[iconFrame.itemID] == false then
+        GameTooltip:AddLine("Glow Reminder: DISABLED", 1, 0.3, 0.3)
+    else
+        GameTooltip:AddLine("Glow Reminder: ENABLED", 0.3, 1, 0.3)
+    end
+
+    -- Buff
+    if buffedItems[iconFrame.itemID] then
+        local buffCount = buffedItems[iconFrame.itemID]
+        local timeLeft  = buffTimes[iconFrame.itemID]
+        if buffCount == 2 then
+            GameTooltip:AddLine("Currently Active (Both Weapons)", 0, 1, 0)
+        else
+            GameTooltip:AddLine("Currently Active", 0, 1, 0)
+        end
+        if timeLeft and timeLeft > 0 then
+            local ts = ConsumesManagerBar_FormatTime(timeLeft)
+            if ts ~= "" then
+                GameTooltip:AddLine("Time Left: " .. ts, 1, 1, 0.5)
+            end
+        elseif timeLeft == -1 then
+            GameTooltip:AddLine("Duration: Weapon Enchant", 0.8, 0.8, 0.8)
+        end
+    else
+        if count > 0 then
+            if glowReminders[iconFrame.itemID] == false then
+                GameTooltip:AddLine("NOT BUFFED (Glow disabled)", 0.7, 0.7, 0.7)
+            else
+                GameTooltip:AddLine("NOT BUFFED - Click to use", 1, 0.3, 0.3)
+            end
+        else
+            GameTooltip:AddLine("Not available in bags", 0.7, 0.7, 0.7)
+        end
+    end
+
+    if editMode then
+        GameTooltip:AddLine("Right-click to move to a different bar", 0.8, 0.8, 1)
+        GameTooltip:AddLine("Use arrows to reorder within this bar", 0.8, 0.8, 0.8)
+    else
+        if count > 0 then
+            if buffedItems[iconFrame.itemID] then
+                GameTooltip:AddLine("Click to refresh buff", 0.5, 1, 0.5)
+            else
+                GameTooltip:AddLine("Click to apply buff", 0.5, 1, 0.5)
+            end
+        else
+            GameTooltip:AddLine("Item not available", 1, 0.5, 0.5)
+        end
+    end
+
+    GameTooltip:Show()
 end
+
+-- ============================================================
+-- EDIT MODE
+-- ============================================================
 
 function ConsumesManagerBar_ToggleEditMode()
     editMode = not editMode
+    HideContextMenu()
     if editMode then
+        -- Force all bars visible; mouseover mode is suspended during editing
+        for _, f in pairs(barFrames) do f:SetAlpha(1) end
         DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar: Edit mode ON")
-        DEFAULT_CHAT_FRAME:AddMessage("Click icons to move between bars")
-        DEFAULT_CHAT_FRAME:AddMessage("Use arrows to reorder")
-        DEFAULT_CHAT_FRAME:AddMessage("Click checkbox above icon to toggle glow reminder")
-        DEFAULT_CHAT_FRAME:AddMessage("Use /cmbarresetorder to reset all custom ordering")
-        DEFAULT_CHAT_FRAME:AddMessage("Use /cmbarresetglow to reset all glow settings")
     else
         DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar: Edit mode OFF")
+        -- Re-apply mouseover state now that edit mode is off
+        if mouseoverMode and not mouseoverVisible then
+            ConsumesManagerBar_SetAllBarsAlpha(0)
+        end
     end
     ConsumesManagerBar_UpdateBars()
 end
 
-function ConsumesManagerBar_SetScale(newScale)
-    -- Clamp scale between 0.5 and 2.0
-    newScale = tonumber(newScale)
-    if not newScale or newScale < 0.5 then
-        newScale = 0.5
-    elseif newScale > 2.0 then
-        newScale = 2.0
-    end
-    
-    -- Save scale setting
-    ConsumesManagerBar_Settings2.scale = newScale
-    
-    -- Apply scaling
-    ConsumesManagerBar_ApplyScaling()
-    
-    DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar: Scale set to " .. string.format("%.1f", newScale))
+function ConsumesManagerBar_IsEditMode()
+    return editMode
 end
 
--- Slash command for showing/hiding the bars
+-- ============================================================
+-- MAIN UPDATE LOOP
+-- ============================================================
+
+function ConsumesManagerBar_UpdateBars()
+    if not next(barFrames) then return end
+
+    ConsumesManagerBar_UpdateBuffedItems()
+
+    local realmName  = GetRealmName()
+    local playerName = UnitName("player")
+
+    if not ConsumesManager_Data or
+       not ConsumesManager_Data[realmName] or
+       not ConsumesManager_Data[realmName][playerName] then
+        for _, f in pairs(barFrames) do f:Hide() end
+        return
+    end
+
+    local inventory = ConsumesManager_Data[realmName][playerName]["inventory"] or {}
+
+    -- Bucket items by bar
+    local buckets = {}
+    for _, bar in ipairs(GetBars()) do buckets[bar.id] = {} end
+
+    if ConsumesManager_SelectedItems then
+        for itemID, isTracked in ConsumesManager_SelectedItems do
+            if isTracked then
+                local barID = GetItemBarID(itemID)
+                if not buckets[barID] then buckets[barID] = {} end
+                table.insert(buckets[barID], {
+                    id                = itemID,
+                    count             = inventory[itemID] or 0,
+                    name              = consumablesList[itemID] or "Unknown",
+                    texture           = ConsumesManagerBar_GetItemTexture(itemID),
+                    buffed            = buffedItems[itemID],
+                    timeLeft          = buffTimes[itemID],
+                    effectivePriority = ConsumesManagerBar_GetEffectivePriority(itemID)
+                })
+            end
+        end
+    end
+
+    for barID, items in pairs(buckets) do
+        table.sort(items, function(a, b)
+            if a.effectivePriority ~= b.effectivePriority then
+                return a.effectivePriority < b.effectivePriority
+            end
+            return (a.name or "") < (b.name or "")
+        end)
+        local f = barFrames[barID]
+        if f then
+            -- Respect hidden flag (skip normal show logic if hidden and not editing)
+            local bar = nil
+            for _, b in ipairs(GetBars()) do
+                if b.id == barID then bar = b; break end
+            end
+            local isHidden = bar and bar.hidden == true
+
+            if isHidden and not editMode then
+                f:Hide()
+                if f.nameLabel then f.nameLabel:Hide() end
+            else
+                ConsumesManagerBar_UpdateSingleBar(f, items, barID)
+                if editMode then
+                    f:SetBackdropBorderColor(1, 0.5, 0.5, 0.8)
+                else
+                    f:SetBackdropBorderColor(0.5, 0.5, 0.5, 0.8)
+                end
+
+                -- Edit mode: show bar name label above the bar
+                if editMode then
+                    if not f.nameLabel then
+                        local lbl = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+                        lbl:SetPoint("BOTTOMLEFT", f, "TOPLEFT", 4, 2)
+                        lbl:SetTextColor(1, 0.82, 0)
+                        f.nameLabel = lbl
+                    end
+                    local displayName = (bar and bar.name or barID)
+                    if isHidden then displayName = displayName .. " [hidden]" end
+                    f.nameLabel:SetText(displayName)
+                    f.nameLabel:Show()
+                else
+                    if f.nameLabel then f.nameLabel:Hide() end
+                end
+            end
+        end
+    end
+
+    ConsumesManagerBar_ApplyScaling()
+    ConsumesManagerBar_CleanupGlowEffects()
+end
+
+-- ============================================================
+-- UPDATE A SINGLE BAR'S ICONS
+-- ============================================================
+
+function ConsumesManagerBar_UpdateSingleBar(frame, items, barID)
+    local itemCount = table.getn(items)
+    local scale     = ConsumesManagerBar_Settings2.scale or 1.0
+    local icoS      = ICON_SIZE    * scale
+    local icoSp     = ICON_SPACING * scale
+
+    -- Ensure swap button table exists on this frame
+    if not frame.swapBtns then frame.swapBtns = {} end
+
+    -- Hide excess icons
+    for i = itemCount + 1, table.getn(frame.icons) do
+        if frame.icons[i] then
+            frame.icons[i]:Hide()
+            frame.icons[i] = nil
+        end
+    end
+
+    -- Hide excess swap buttons (need at most itemCount-1)
+    for i = math.max(1, itemCount), table.getn(frame.swapBtns) do
+        if frame.swapBtns[i] then frame.swapBtns[i]:Hide() end
+    end
+
+    for i = 1, itemCount do
+        local item      = items[i]
+        local iconFrame = frame.icons[i]
+
+        -- CREATE icon frame if needed
+        if not iconFrame then
+            iconFrame = CreateFrame("Button",
+                frame:GetName() .. "Icon" .. i, frame)
+            iconFrame:SetWidth(icoS)
+            iconFrame:SetHeight(icoS)
+            iconFrame:SetFrameLevel(frame:GetFrameLevel() + 2)
+
+            local tex = iconFrame:CreateTexture(nil, "BACKGROUND")
+            tex:SetAllPoints(iconFrame)
+            iconFrame.icon = tex
+
+            local cnt = iconFrame:CreateFontString(nil, "OVERLAY", "NumberFontNormalSmall")
+            cnt:SetPoint("BOTTOMRIGHT", iconFrame, "BOTTOMRIGHT", -2 * scale, 2 * scale)
+            cnt:SetJustifyH("RIGHT")
+            cnt:SetAlpha(1.0)
+            iconFrame.count = cnt
+
+            local tmr = iconFrame:CreateFontString(nil, "OVERLAY", "NumberFontNormalSmall")
+            tmr:SetPoint("TOPLEFT", iconFrame, "TOPLEFT", 2 * scale, -2 * scale)
+            tmr:SetJustifyH("LEFT")
+            tmr:SetTextColor(0, 1, 0)
+            tmr:SetAlpha(1.0)
+            iconFrame.timeText = tmr
+
+            local bh = iconFrame:CreateTexture(nil, "OVERLAY")
+            bh:SetWidth(icoS + 17 * scale)
+            bh:SetHeight(icoS + 17 * scale)
+            bh:SetPoint("CENTER", iconFrame, "CENTER", 0.5, 1)
+            bh:SetTexture("Interface\Buttons\UI-ActionButton-Border")
+            bh:SetBlendMode("ADD")
+            bh:SetAlpha(1.0)
+            bh:SetVertexColor(1, 0.82, 0, 1)
+            bh:SetDrawLayer("OVERLAY", 7)
+            bh:Hide()
+            iconFrame.buffHighlight = bh
+
+            iconFrame:SetScript("OnEnter", function()
+                if this.itemID then
+                    ConsumesManagerBar_ShowTooltip(this, frame.barID)
+                end
+            end)
+            iconFrame:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+            iconFrame:EnableMouse(true)
+            iconFrame:SetScript("OnMouseDown", function()
+                if not this.itemID then return end
+                if arg1 == "RightButton" and editMode then
+                    ShowBarContextMenu(this, this.itemID)
+                end
+            end)
+            iconFrame:SetScript("OnMouseUp", function()
+                if not this.itemID then return end
+                if arg1 == "LeftButton" and not editMode then
+                    ConsumesManagerBar_UseItem(this.itemID)
+                end
+            end)
+
+            frame.icons[i] = iconFrame
+        end
+
+        -- Disable mouse on any legacy child arrow frames from old code
+        iconFrame:SetFrameLevel(frame:GetFrameLevel() + 2)
+        if iconFrame.leftArrow then
+            iconFrame.leftArrow:EnableMouse(false)
+            iconFrame.leftArrow:Hide()
+        end
+        if iconFrame.rightArrow then
+            iconFrame.rightArrow:EnableMouse(false)
+            iconFrame.rightArrow:Hide()
+        end
+
+        -- Position icon (clear first to prevent anchor accumulation across updates)
+        iconFrame:ClearAllPoints()
+        iconFrame:SetPoint("LEFT", frame, "LEFT",
+            (i - 1) * (icoS + icoSp) + icoSp, 0)
+
+        iconFrame.itemID = item.id
+        iconFrame.icon:SetTexture(item.texture)
+
+        if item.count > 1 then
+            iconFrame.count:SetText(item.count)
+        else
+            iconFrame.count:SetText("")
+        end
+
+        ConsumesManagerBar_UpdateIconTimerDisplay(iconFrame, item)
+
+        if item.buffed then
+            iconFrame.icon:SetDesaturated(false)
+            local bd = ConsumesManagerBar_GetItemBuffData(item.id)
+            if bd and bd.weaponEnchantName then
+                local _, ec = ConsumesManagerBar_HasWeaponEnchant(item.id)
+                iconFrame.buffHighlight:SetVertexColor(
+                    ec == 2 and 0 or 1,
+                    ec == 2 and 1 or 0.82,
+                    0, 1)
+            else
+                iconFrame.buffHighlight:SetVertexColor(1, 0.82, 0, 1)
+            end
+            iconFrame.buffHighlight:Show()
+        elseif item.count > 0 then
+            iconFrame.icon:SetDesaturated(false)
+            iconFrame.buffHighlight:Hide()
+        else
+            iconFrame.icon:SetDesaturated(true)
+            if iconFrame.count:GetText() ~= "" then
+                iconFrame.count:SetTextColor(0.5, 0.5, 0.5)
+            end
+            iconFrame.buffHighlight:Hide()
+        end
+
+        ConsumesManagerBar_UpdateGlowForIcon(iconFrame, item)
+        iconFrame:Show()
+    end
+
+    -- SWAP BUTTONS: parented to UIParent (not bar frame) so they aren't
+    -- clipped by the bar frame's bounding box. One button per adjacent pair,
+    -- positioned just above the gap between icon i and icon i+1.
+    local swapSize = math.max(12, math.floor(16 * scale))
+    for i = 1, itemCount - 1 do
+        local sb = frame.swapBtns[i]
+        if not sb then
+            sb = CreateFrame("Button", frame:GetName() .. "Swap" .. i, UIParent)
+            sb:SetFrameStrata("HIGH")
+            sb:SetNormalTexture("Interface\Buttons\UI-MicroButton-MainMenu-Up")
+            sb:SetHighlightTexture("Interface\Buttons\UI-MicroButton-MainMenu-Up")
+            sb:SetPushedTexture("Interface\Buttons\UI-MicroButton-MainMenu-Down")
+            -- Draw a simple swap icon: two small triangles using FontString
+            local lbl = sb:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            lbl:SetAllPoints(sb)
+            lbl:SetText("<>")
+            lbl:SetTextColor(1, 1, 0)
+            sb.lbl = lbl
+            sb:SetScript("OnLeave", function() GameTooltip:Hide() end)
+            frame.swapBtns[i] = sb
+        end
+
+        sb:SetWidth(swapSize)
+        sb:SetHeight(swapSize)
+        if sb.lbl then
+            sb.lbl:SetFont("Fonts\FRIZQT__.TTF", math.max(8, math.floor(10 * scale)), "OUTLINE")
+        end
+        sb:ClearAllPoints()
+
+        -- Center of gap between icon i right edge and icon i+1 left edge
+        local gapCenterX = (i - 1) * (icoS + icoSp) + icoSp + icoS + icoSp * 0.5
+        sb:SetPoint("BOTTOM", frame, "TOPLEFT", gapCenterX, 3)
+
+        -- Capture current item IDs for this gap
+        local idL = items[i].id
+        local idR = items[i + 1].id
+
+        sb:SetScript("OnClick", function()
+            ConsumesManagerBar_MoveItemRight(idL, barID)
+        end)
+
+        sb:SetScript("OnEnter", function()
+            local nL = consumablesList[idL] or tostring(idL)
+            local nR = consumablesList[idR] or tostring(idR)
+            GameTooltip:SetOwner(this, "ANCHOR_TOP")
+            GameTooltip:SetText("Swap order")
+            GameTooltip:AddLine(nL .. " <-> " .. nR, 1, 1, 1)
+            GameTooltip:Show()
+        end)
+
+        if editMode then sb:Show() else sb:Hide() end
+    end
+
+    -- Resize / show-hide bar
+    if itemCount > 0 then
+        frame:SetWidth(itemCount * (icoS + icoSp) + icoSp)
+        frame:Show()
+    else
+        frame:Hide()
+    end
+end
+-- ============================================================
+-- ICON TIMER DISPLAY
+-- ============================================================
+
+function ConsumesManagerBar_UpdateIconTimerDisplay(iconFrame, item)
+    if not (item.buffed and item.timeLeft) then
+        iconFrame.timeText:SetText("")
+        iconFrame.timeText:SetAlpha(1.0)
+        if iconFrame.count:GetText() ~= "" then
+            iconFrame.count:SetTextColor(1, 1, 1)
+            iconFrame.count:SetAlpha(1.0)
+        end
+        pulsingTimers[item.id] = nil
+        return
+    end
+
+    local tl = item.timeLeft
+
+    if tl == -1 then
+        -- Weapon enchant / permanent
+        iconFrame.timeText:SetText("Active")
+        iconFrame.timeText:SetTextColor(0, 1, 0)
+        iconFrame.timeText:SetAlpha(1.0)
+        if iconFrame.count:GetText() ~= "" then
+            iconFrame.count:SetTextColor(0, 1, 0)
+            iconFrame.count:SetAlpha(1.0)
+        end
+        pulsingTimers[item.id] = nil
+        if iconFrame.buffHighlight then
+            iconFrame.buffHighlight:SetVertexColor(1, 0.82, 0, 1)
+            iconFrame.buffHighlight:SetAlpha(1.0)
+        end
+    elseif tl > 0 then
+        iconFrame.timeText:SetText(ConsumesManagerBar_FormatTime(tl))
+        local function setPulse()
+            if not pulsingTimers[item.id] then
+                pulsingTimers[item.id] = {
+                    frame = iconFrame, lastUpdate = 0,
+                    direction = 1, timeLeft = tl
+                }
+            else
+                pulsingTimers[item.id].frame   = iconFrame
+                pulsingTimers[item.id].timeLeft = tl
+            end
+        end
+        if tl < 30 then
+            iconFrame.timeText:SetTextColor(1, 0, 0)
+            if iconFrame.count:GetText() ~= "" then
+                iconFrame.count:SetTextColor(1, 0, 0)
+            end
+            setPulse()
+            if iconFrame.buffHighlight then
+                iconFrame.buffHighlight:SetVertexColor(1, 0.3, 0.3, 1)
+            end
+        elseif tl < 120 then
+            iconFrame.timeText:SetTextColor(1, 1, 0)
+            if iconFrame.count:GetText() ~= "" then
+                iconFrame.count:SetTextColor(1, 1, 0)
+            end
+            setPulse()
+            if iconFrame.buffHighlight then
+                iconFrame.buffHighlight:SetVertexColor(1, 0.82, 0, 1)
+            end
+        else
+            iconFrame.timeText:SetTextColor(1, 1, 0)
+            iconFrame.timeText:SetAlpha(1.0)
+            if iconFrame.count:GetText() ~= "" then
+                iconFrame.count:SetTextColor(0, 1, 0)
+                iconFrame.count:SetAlpha(1.0)
+            end
+            pulsingTimers[item.id] = nil
+            if iconFrame.buffHighlight then
+                iconFrame.buffHighlight:SetVertexColor(1, 1, 1, 1)
+                iconFrame.buffHighlight:SetAlpha(1.0)
+            end
+        end
+    else
+        -- tl == 0
+        iconFrame.timeText:SetText("")
+        iconFrame.timeText:SetAlpha(1.0)
+        if iconFrame.count:GetText() ~= "" then
+            iconFrame.count:SetTextColor(1, 1, 1)
+            iconFrame.count:SetAlpha(1.0)
+        end
+        pulsingTimers[item.id] = nil
+    end
+end
+
+-- ============================================================
+-- MIGRATION (old 2-bar iconVisibility -> new itemBar system)
+-- ============================================================
+
+local function MigrateLegacyData()
+    if ConsumesManagerBar_Settings2._migrated then return end
+    if not ConsumesManagerBar_Settings2.iconVisibility then
+        ConsumesManagerBar_Settings2._migrated = true
+        return
+    end
+
+    -- Ensure we have at least 2 bars
+    local bars = GetBars()
+    if table.getn(bars) < 2 then
+        table.insert(bars, { id = "bar2", name = "Bar 2" })
+    end
+
+    -- Migrate old positions
+    if ConsumesManagerBar_Settings2.barPosition then
+        bars[1].position = ConsumesManagerBar_Settings2.barPosition
+    end
+    if ConsumesManagerBar_Settings2.disabledBarPosition and bars[2] then
+        bars[2].position = ConsumesManagerBar_Settings2.disabledBarPosition
+    end
+
+    -- Migrate item assignments
+    if not ConsumesManagerBar_Settings2.itemBar then
+        ConsumesManagerBar_Settings2.itemBar = {}
+    end
+    for itemID, isHidden in pairs(ConsumesManagerBar_Settings2.iconVisibility) do
+        if isHidden then
+            ConsumesManagerBar_Settings2.itemBar[itemID] = "bar2"
+        end
+    end
+
+    ConsumesManagerBar_Settings2.iconVisibility        = nil
+    ConsumesManagerBar_Settings2.barPosition           = nil
+    ConsumesManagerBar_Settings2.disabledBarPosition   = nil
+    ConsumesManagerBar_Settings2._migrated             = true
+end
+
+-- ============================================================
+-- INITIALIZE
+-- ============================================================
+
+function ConsumesManagerBar_Initialize()
+    if ConsumesManagerBar_Settings2.scale == nil then
+        ConsumesManagerBar_Settings2.scale = 1.0
+    end
+
+    MigrateLegacyData()
+
+    -- Build WoW frames for all saved bars
+    for _, bar in ipairs(GetBars()) do
+        if not barFrames[bar.id] then
+            barFrames[bar.id] = CreateBarFrameForBar(bar)
+        end
+    end
+
+    ConsumesManagerBar_LoadCustomPriorities()
+    ConsumesManagerBar_LoadGlowSettings()
+    ConsumesManagerBar_LoadTextureCache()
+
+    -- Apply mouseover mode startup state
+    mouseoverMode = ConsumesManagerBar_Settings2.mouseoverMode or false
+    if mouseoverMode then
+        ConsumesManagerBar_SetAllBarsAlpha(0)
+        ConsumesManagerBar_CreateMouseoverHitFrame()
+    end
+
+    -- Attach OnUpdate to the primary bar's frame
+    local primaryFrame = barFrames[GetBars()[1].id]
+    if primaryFrame then
+        primaryFrame:SetScript("OnUpdate", function()
+            if not this.lastBarUpdate then this.lastBarUpdate = GetTime() end
+            if GetTime() - this.lastBarUpdate > 0.5 then
+                ConsumesManagerBar_UpdateBars()
+                if mouseoverMode then
+                    ConsumesManagerBar_UpdateMouseoverHitFrame()
+                end
+                this.lastBarUpdate = GetTime()
+            end
+
+            if not this.lastTexRefresh then this.lastTexRefresh = GetTime() end
+            if GetTime() - this.lastTexRefresh > 10 then
+                ConsumesManagerBar_RefreshItemTextures()
+                this.lastTexRefresh = GetTime()
+            end
+
+            ConsumesManagerBar_UpdatePulseAnimation()
+        end)
+    end
+
+    if ConsumesManagerBar_IsGlowAvailable() then
+        DEFAULT_CHAT_FRAME:AddMessage(
+            "ConsumesManagerBar loaded! DoiteGlow detected.")
+    else
+        DEFAULT_CHAT_FRAME:AddMessage(
+            "ConsumesManagerBar loaded! (fallback glow mode)")
+    end
+end
+
+-- ============================================================
+-- SLASH COMMANDS
+-- ============================================================
+
 SLASH_CONSUMESBAR1 = "/cmbar"
 SLASH_CONSUMESBAR2 = "/consumesbar"
 SlashCmdList["CONSUMESBAR"] = function(msg)
-    if not barFrame then
-        ConsumesManagerBar_Initialize()
+    if not next(barFrames) then ConsumesManagerBar_Initialize(); return end
+    local anyShown = false
+    for _, f in pairs(barFrames) do
+        if f:IsShown() then anyShown = true; break end
+    end
+    if anyShown then
+        for _, f in pairs(barFrames) do f:Hide() end
+        DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar: hidden. /cmbar to show.")
     else
-        if barFrame:IsShown() then
-            barFrame:Hide()
-            if disabledBarFrame then
-                disabledBarFrame:Hide()
-            end
-            DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar hidden. Use /cmbar to show again.")
-            -- SAVE VISIBILITY STATE
-            ConsumesManagerBar_Settings2.barVisible = false
-            ConsumesManagerBar_Settings2.disabledBarVisible = false
-        else
-            barFrame:Show()
-            if disabledBarFrame then
-                disabledBarFrame:Show()
-            end
-            DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar shown.")
-            -- SAVE VISIBILITY STATE
-            ConsumesManagerBar_Settings2.barVisible = true
-            ConsumesManagerBar_Settings2.disabledBarVisible = true
-        end
+        ConsumesManagerBar_UpdateBars()
+        DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar: shown.")
     end
 end
 
--- Slash command for edit mode
 SLASH_CONSUMESBAREDIT1 = "/cmbaredit"
 SLASH_CONSUMESBAREDIT2 = "/consumesbaredit"
 SlashCmdList["CONSUMESBAREDIT"] = function(msg)
-    if not barFrame then
-        ConsumesManagerBar_Initialize()
-    end
+    if not next(barFrames) then ConsumesManagerBar_Initialize() end
     ConsumesManagerBar_ToggleEditMode()
 end
 
--- Slash command to reset positions
 SLASH_CONSUMESBARRESET1 = "/cmbarreset"
 SLASH_CONSUMESBARRESET2 = "/consumesbarreset"
 SlashCmdList["CONSUMESBARRESET"] = function(msg)
-    -- Reset saved positions (UPDATED VARIABLE NAME)
-    ConsumesManagerBar_Settings2.barPosition = nil
-    ConsumesManagerBar_Settings2.disabledBarPosition = nil
-    
-    -- Reset to default positions
-    barFrame:ClearAllPoints()
-    barFrame:SetPoint("CENTER", UIParent, "CENTER", 0, -150)
-    
-    disabledBarFrame:ClearAllPoints()
-    disabledBarFrame:SetPoint("TOP", barFrame, "BOTTOM", 0, -10)
-    
-    DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar: Bar positions reset to default.")
+    for i, bar in ipairs(GetBars()) do
+        bar.position = nil
+        local f = barFrames[bar.id]
+        if f then
+            f:ClearAllPoints()
+            f:SetPoint("CENTER", UIParent, "CENTER", 0, (i - 1) * -55)
+        end
+    end
+    DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar: All positions reset.")
 end
 
--- Slash command for scaling
 SLASH_CONSUMESBARSCALE1 = "/cmbarscale"
 SLASH_CONSUMESBARSCALE2 = "/consumesbarscale"
 SlashCmdList["CONSUMESBARSCALE"] = function(msg)
-    if not barFrame then
-        ConsumesManagerBar_Initialize()
-        DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar initialized. Use /cmbarscale 0.5-2.0 to adjust size.")
-        return
-    end
-    
-    if msg and msg ~= "" then
-        -- Parse scale value from command
-        local newScale = tonumber(msg)
-        if newScale then
-            ConsumesManagerBar_SetScale(newScale)
-        else
-            DEFAULT_CHAT_FRAME:AddMessage("Usage: /cmbarscale <value>")
-            DEFAULT_CHAT_FRAME:AddMessage("Current scale: " .. string.format("%.1f", ConsumesManagerBar_Settings2.scale or 1.0))
-            DEFAULT_CHAT_FRAME:AddMessage("Valid range: 0.5 - 2.0 (0.5 = 50%, 1.0 = 100%, 2.0 = 200%)")
-        end
+    if not next(barFrames) then ConsumesManagerBar_Initialize() end
+    local v = tonumber(msg)
+    if v then
+        ConsumesManagerBar_SetScale(v)
     else
-        -- Show current scale if no value provided
-        DEFAULT_CHAT_FRAME:AddMessage("Current scale: " .. string.format("%.1f", ConsumesManagerBar_Settings2.scale or 1.0))
-        DEFAULT_CHAT_FRAME:AddMessage("Usage: /cmbarscale <value>")
-        DEFAULT_CHAT_FRAME:AddMessage("Valid range: 0.5 - 2.0 (0.5 = 50%, 1.0 = 100%, 2.0 = 200%)")
+        DEFAULT_CHAT_FRAME:AddMessage(
+            "Scale: " .. string.format("%.1f",
+            ConsumesManagerBar_Settings2.scale or 1.0))
+        DEFAULT_CHAT_FRAME:AddMessage("Usage: /cmbarscale 0.5-2.0")
     end
 end
 
--- Slash command to reset custom ordering
 SLASH_CONSUMESBARRESETORDER1 = "/cmbarresetorder"
-SLASH_CONSUMESBARRESETORDER2 = "/consumesbarresetorder"
-SlashCmdList["CONSUMESBARRESETORDER"] = function(msg)
+SlashCmdList["CONSUMESBARRESETORDER"] = function()
     ConsumesManagerBar_ResetAllCustomPriorities()
 end
 
--- Slash command to reset glow settings
 SLASH_CONSUMESBARRESETGLOW1 = "/cmbarresetglow"
-SLASH_CONSUMESBARRESETGLOW2 = "/consumesbarresetglow"
-SlashCmdList["CONSUMESBARRESETGLOW"] = function(msg)
+SlashCmdList["CONSUMESBARRESETGLOW"] = function()
     ConsumesManagerBar_ResetAllGlowSettings()
 end
 
--- REMOVED: Slash command to refresh textures (was causing problems)
+SLASH_CMBARMOUSEOVER1 = "/cmbarmouseover"
+SLASH_CMBARMOUSEOVER2 = "/consumesbarmouseover"
+SlashCmdList["CMBARMOUSEOVER"] = function()
+    if not next(barFrames) then ConsumesManagerBar_Initialize() end
+    ConsumesManagerBar_ToggleMouseoverMode()
+end
+
+-- ============================================================
+-- BOOT
+-- ============================================================
 
 local initFrame = CreateFrame("Frame")
 initFrame:RegisterEvent("VARIABLES_LOADED")
 initFrame:SetScript("OnEvent", function()
     if event == "VARIABLES_LOADED" then
-        -- Initialize saved variables if they don't exist (UPDATED VARIABLE NAME)
         if not ConsumesManagerBar_Settings2 then
             ConsumesManagerBar_Settings2 = {}
         end
-        
-        -- Initialize immediately
         ConsumesManagerBar_Initialize()
     end
 end)
