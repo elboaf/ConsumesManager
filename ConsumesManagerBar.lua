@@ -432,8 +432,7 @@ function ConsumesManagerBar_FormatTime(seconds)
     if not seconds or seconds < 0 then return "" end
     if seconds > 3600 then
         local h = math.floor(seconds / 3600)
-        local m = math.floor((seconds - h * 3600) / 60)
-        return h .. "h " .. m .. "m"
+        return h .. "h"
     elseif seconds > 60 then
         return math.floor(seconds / 60) .. "m"
     else
