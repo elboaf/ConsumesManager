@@ -1338,7 +1338,7 @@ function ConsumesManagerBar_UpdateSingleBar(frame, items, barID)
                     ShowBarContextMenu(this, this.itemID)
                 end
             end)
-            iconFrame:SetScript("OnMouseUp", function()
+            iconFrame:SetScript("OnClick", function()
                 if not this.itemID then return end
                 if arg1 == "LeftButton" and not editMode then
                     ConsumesManagerBar_UseItem(this.itemID)
