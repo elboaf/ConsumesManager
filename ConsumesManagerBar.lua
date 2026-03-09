@@ -1064,7 +1064,7 @@ local function GetItemCooldown(itemID)
         for slot = 1, GetContainerNumSlots(bag) do
             local itemLink = GetContainerItemLink(bag, slot)
             if itemLink then
-                local id = tonumber(string.match(itemLink, "item:(%d+)"))
+                local id = tonumber(strmatch(itemLink, "item:(%d+)"))
                 if id and id == itemID then
                     local start, duration, enable = GetContainerItemCooldown(bag, slot)
                     return start, duration, enable
