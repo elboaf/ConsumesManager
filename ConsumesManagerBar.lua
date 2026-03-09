@@ -462,14 +462,20 @@ function ConsumesManagerBar_ApplyScaling()
     local icoSp  = ICON_SPACING * scale
 
     for _, frame in pairs(barFrames) do
-        frame:SetHeight(barH)
+        local vertical = frame.barID and ConsumesManagerBar_IsBarVertical(frame.barID)
+        local n = table.getn(frame.icons)
         for i, iconFrame in ipairs(frame.icons) do
             if iconFrame then
                 iconFrame:SetWidth(icoS)
                 iconFrame:SetHeight(icoS)
                 iconFrame:ClearAllPoints()
-                iconFrame:SetPoint("LEFT", frame, "LEFT",
-                    (i - 1) * (icoS + icoSp) + icoSp, 0)
+                if vertical then
+                    iconFrame:SetPoint("TOP", frame, "TOP",
+                        0, -((i - 1) * (icoS + icoSp) + icoSp))
+                else
+                    iconFrame:SetPoint("LEFT", frame, "LEFT",
+                        (i - 1) * (icoS + icoSp) + icoSp, 0)
+                end
                 if iconFrame.buffHighlight then
                     iconFrame.buffHighlight:SetWidth(icoS + 17 * scale)
                     iconFrame.buffHighlight:SetHeight(icoS + 17 * scale)
@@ -488,9 +494,14 @@ function ConsumesManagerBar_ApplyScaling()
                 end
             end
         end
-        if table.getn(frame.icons) > 0 then
-            local n = table.getn(frame.icons)
-            frame:SetWidth(n * (icoS + icoSp) + icoSp)
+        if n > 0 then
+            if vertical then
+                frame:SetWidth(icoS + icoSp * 2)
+                frame:SetHeight(n * (icoS + icoSp) + icoSp)
+            else
+                frame:SetHeight(barH)
+                frame:SetWidth(n * (icoS + icoSp) + icoSp)
+            end
         end
     end
 end
@@ -794,6 +805,25 @@ function ConsumesManagerBar_IsBarHidden(barID)
     return false
 end
 
+function ConsumesManagerBar_SetBarVertical(barID, vertical)
+    for _, bar in ipairs(GetBars()) do
+        if bar.id == barID then
+            bar.vertical = vertical or nil
+            break
+        end
+    end
+    ConsumesManagerBar_UpdateBars()
+end
+
+function ConsumesManagerBar_IsBarVertical(barID)
+    for _, bar in ipairs(GetBars()) do
+        if bar.id == barID then
+            return bar.vertical == true
+        end
+    end
+    return false
+end
+
 function ConsumesManagerBar_MoveItemToBar(itemID, targetBarID)
     SetItemBarID(itemID, targetBarID)
     ConsumesManagerBar_UpdateBars()
@@ -1029,6 +1059,22 @@ end
 -- USE ITEM
 -- ============================================================
 
+local function GetItemCooldown(itemID)
+    for bag = 0, 4 do
+        for slot = 1, GetContainerNumSlots(bag) do
+            local itemLink = GetContainerItemLink(bag, slot)
+            if itemLink then
+                local id = tonumber(string.match(itemLink, "item:(%d+)"))
+                if id and id == itemID then
+                    local start, duration, enable = GetContainerItemCooldown(bag, slot)
+                    return start, duration, enable
+                end
+            end
+        end
+    end
+    return 0, 0, 0
+end
+
 function ConsumesManagerBar_UseItem(itemID)
     local hadTarget          = UnitExists("target")
     local wasTargetingPlayer = UnitIsUnit("player", "target")
@@ -1237,7 +1283,7 @@ function ConsumesManagerBar_UpdateBars()
                 if editMode then
                     if not f.nameLabel then
                         local lbl = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-                        lbl:SetPoint("BOTTOMLEFT", f, "TOPLEFT", 4, 2)
+                        lbl:SetPoint("TOPLEFT", f, "BOTTOMLEFT", 4, -2)
                         lbl:SetTextColor(1, 0.82, 0)
                         f.nameLabel = lbl
                     end
@@ -1265,6 +1311,7 @@ function ConsumesManagerBar_UpdateSingleBar(frame, items, barID)
     local scale     = ConsumesManagerBar_Settings2.scale or 1.0
     local icoS      = ICON_SIZE    * scale
     local icoSp     = ICON_SPACING * scale
+    local vertical  = ConsumesManagerBar_IsBarVertical(barID)
 
     -- Ensure swap button table exists on this frame
     if not frame.swapBtns then frame.swapBtns = {} end
@@ -1310,6 +1357,10 @@ function ConsumesManagerBar_UpdateSingleBar(frame, items, barID)
             tmr:SetTextColor(0, 1, 0)
             tmr:SetAlpha(1.0)
             iconFrame.timeText = tmr
+
+            local cd = CreateFrame("Model", frame:GetName() .. "Cooldown" .. i, iconFrame, "CooldownFrameTemplate")
+            cd:SetAllPoints(iconFrame)
+            iconFrame.cooldown = cd
 
             local bh = iconFrame:CreateTexture(nil, "OVERLAY")
             bh:SetWidth(icoS + 17 * scale)
@@ -1360,8 +1411,13 @@ function ConsumesManagerBar_UpdateSingleBar(frame, items, barID)
 
         -- Position icon (clear first to prevent anchor accumulation across updates)
         iconFrame:ClearAllPoints()
-        iconFrame:SetPoint("LEFT", frame, "LEFT",
-            (i - 1) * (icoS + icoSp) + icoSp, 0)
+        if vertical then
+            iconFrame:SetPoint("TOP", frame, "TOP",
+                0, -((i - 1) * (icoS + icoSp) + icoSp))
+        else
+            iconFrame:SetPoint("LEFT", frame, "LEFT",
+                (i - 1) * (icoS + icoSp) + icoSp, 0)
+        end
 
         iconFrame.itemID = item.id
         iconFrame.icon:SetTexture(item.texture)
@@ -1373,6 +1429,12 @@ function ConsumesManagerBar_UpdateSingleBar(frame, items, barID)
         end
 
         ConsumesManagerBar_UpdateIconTimerDisplay(iconFrame, item)
+
+        -- Update cooldown sweep
+        if iconFrame.cooldown then
+            local cdStart, cdDuration, cdEnable = GetItemCooldown(item.id)
+            CooldownFrame_SetTimer(iconFrame.cooldown, cdStart, cdDuration, cdEnable)
+        end
 
         if item.buffed then
             iconFrame.icon:SetDesaturated(false)
@@ -1409,31 +1471,24 @@ function ConsumesManagerBar_UpdateSingleBar(frame, items, barID)
     for i = 1, itemCount - 1 do
         local sb = frame.swapBtns[i]
         if not sb then
-            sb = CreateFrame("Button", frame:GetName() .. "Swap" .. i, UIParent)
+            sb = CreateFrame("Button", frame:GetName() .. "Swap" .. i, UIParent, "UIPanelButtonTemplate")
             sb:SetFrameStrata("HIGH")
-            sb:SetNormalTexture("Interface\Buttons\UI-MicroButton-MainMenu-Up")
-            sb:SetHighlightTexture("Interface\Buttons\UI-MicroButton-MainMenu-Up")
-            sb:SetPushedTexture("Interface\Buttons\UI-MicroButton-MainMenu-Down")
-            -- Draw a simple swap icon: two small triangles using FontString
-            local lbl = sb:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-            lbl:SetAllPoints(sb)
-            lbl:SetText("<>")
-            lbl:SetTextColor(1, 1, 0)
-            sb.lbl = lbl
             sb:SetScript("OnLeave", function() GameTooltip:Hide() end)
             frame.swapBtns[i] = sb
         end
 
-        sb:SetWidth(swapSize)
+        sb:SetWidth(swapSize * 2)
         sb:SetHeight(swapSize)
-        if sb.lbl then
-            sb.lbl:SetFont("Fonts\FRIZQT__.TTF", math.max(8, math.floor(10 * scale)), "OUTLINE")
-        end
+        sb:SetText("<>")
         sb:ClearAllPoints()
 
-        -- Center of gap between icon i right edge and icon i+1 left edge
-        local gapCenterX = (i - 1) * (icoS + icoSp) + icoSp + icoS + icoSp * 0.5
-        sb:SetPoint("BOTTOM", frame, "TOPLEFT", gapCenterX, 3)
+        if vertical then
+            local gapCenterY = -((i - 1) * (icoS + icoSp) + icoSp + icoS + icoSp * 0.5)
+            sb:SetPoint("LEFT", frame, "TOPRIGHT", 3, gapCenterY)
+        else
+            local gapCenterX = (i - 1) * (icoS + icoSp) + icoSp + icoS + icoSp * 0.5
+            sb:SetPoint("BOTTOM", frame, "TOPLEFT", gapCenterX, 3)
+        end
 
         -- Capture current item IDs for this gap
         local idL = items[i].id
@@ -1455,9 +1510,46 @@ function ConsumesManagerBar_UpdateSingleBar(frame, items, barID)
         if editMode then sb:Show() else sb:Hide() end
     end
 
+    -- Orient toggle button (edit mode only, parented to UIParent)
+    if not frame.orientBtn then
+        local ob = CreateFrame("Button", frame:GetName() .. "OrientBtn", UIParent, "UIPanelButtonTemplate")
+        ob:SetFrameStrata("HIGH")
+        ob:SetText("^>")
+        ob:SetScript("OnEnter", function()
+            GameTooltip:SetOwner(this, "ANCHOR_TOP")
+            GameTooltip:SetText("Toggle orientation")
+            GameTooltip:AddLine("Switch between horizontal and vertical", 1, 1, 1)
+            GameTooltip:Show()
+        end)
+        ob:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        ob:SetScript("OnClick", function()
+            local isVert = ConsumesManagerBar_IsBarVertical(frame.barID)
+            ConsumesManagerBar_SetBarVertical(frame.barID, not isVert or nil)
+        end)
+        frame.orientBtn = ob
+    end
+
+    local ob = frame.orientBtn
+    local obSize = math.max(16, math.floor(22 * scale))
+    ob:SetWidth(obSize * 2)
+    ob:SetHeight(obSize)
+    ob:ClearAllPoints()
+    if vertical then
+        ob:SetPoint("BOTTOM", frame, "TOP", 0, 3)
+    else
+        ob:SetPoint("RIGHT", frame, "LEFT", -3, 0)
+    end
+    if editMode and itemCount > 0 then ob:Show() else ob:Hide() end
+
     -- Resize / show-hide bar
     if itemCount > 0 then
-        frame:SetWidth(itemCount * (icoS + icoSp) + icoSp)
+        if vertical then
+            frame:SetWidth(icoS + icoSp * 2)
+            frame:SetHeight(itemCount * (icoS + icoSp) + icoSp)
+        else
+            frame:SetWidth(itemCount * (icoS + icoSp) + icoSp)
+            frame:SetHeight(icoS + icoSp * 2)
+        end
         frame:Show()
     else
         frame:Hide()
