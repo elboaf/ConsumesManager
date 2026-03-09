@@ -1060,17 +1060,10 @@ end
 -- ============================================================
 
 local function GetItemCooldown(itemID)
-    for bag = 0, 4 do
-        for slot = 1, GetContainerNumSlots(bag) do
-            local itemLink = GetContainerItemLink(bag, slot)
-            if itemLink then
-                local id = tonumber(strmatch(itemLink, "item:(%d+)"))
-                if id and id == itemID then
-                    local start, duration, enable = GetContainerItemCooldown(bag, slot)
-                    return start, duration, enable
-                end
-            end
-        end
+    local bag, slot = ConsumesManager_FindItemInBags(itemID)
+    if bag and slot then
+        local start, duration, enable = GetContainerItemCooldown(bag, slot)
+        return start, duration, enable
     end
     return 0, 0, 0
 end
