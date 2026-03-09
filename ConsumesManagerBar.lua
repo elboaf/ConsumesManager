@@ -1730,11 +1730,9 @@ function ConsumesManagerBar_Initialize()
     end
 
     if ConsumesManagerBar_IsGlowAvailable() then
-        DEFAULT_CHAT_FRAME:AddMessage(
-            "ConsumesManagerBar loaded! DoiteGlow detected.")
+        DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar loaded!")
     else
-        DEFAULT_CHAT_FRAME:AddMessage(
-            "ConsumesManagerBar loaded! (fallback glow mode)")
+        DEFAULT_CHAT_FRAME:AddMessage("ConsumesManagerBar loaded! (fallback glow mode)")
     end
 end
 
