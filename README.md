@@ -1,14 +1,82 @@
-updated with new concoction recipes, buff bar, buff tracking, and dynamic icons
+# ConsumesManager
 
-updated itemlist to include the spell id's related to the buff items
+A consumables tracking and buff bar addon for World of Warcraft 1.12 (Vanilla), built on SuperWoW.
 
-uses superwow's updated UnitBuff() function to track buffs based on spell id returned
+Forked from [Cinecom/ConsumesManager](https://github.com/Cinecom/ConsumesManager).
 
-uses superwow's updated GetWeaponEnchantInfo() to track mainhand and offhand weapon buffs.
+---
 
-type /cmbar to show/hide the buff bar
+## Features
 
-forked from https://github.com/Cinecom/ConsumesManager
+### Consumables Tracker
+- Tracks consumables, food buffs, flasks, elixirs, poisons, and more across your inventory, bank, and mail
+- Supports multiple characters and accounts
+- Includes updated concoction recipes and an expanded item list with spell IDs for accurate buff detection
+
+### Buff Bar
+A dynamic action bar that displays your tracked consumables as clickable icons. Click an icon to use the item directly from your bags.
+
+- **Multiple bars** — create as many bars as you need, each independently positioned and configured
+- **Horizontal or vertical orientation** — toggle per bar in edit mode
+- **Buff tracking** — icons show your current buff status using SuperWoW's updated `UnitBuff()` (spell ID based) and `GetWeaponEnchantInfo()` for weapon enchants
+- **Cooldown display** — item cooldown sweeps shown directly on each icon
+- **Buff timer** — remaining buff duration shown on buffed icons
+- **Item count** — current bag count displayed on each icon
+- **Glow reminder** — animated glow on icons where your buff is missing or expired (powered by bundled DoiteGlow)
+- **Mouseover mode** — bars fade out and only appear when you mouse over them
+- **Scalable** — resize all bars globally with `/cmbarscale`
+- **Icon reordering** — drag icons left/right (or up/down in vertical mode) within a bar using swap buttons in edit mode
+- **Per-bar show/hide** — hide individual bars without deleting them
+- **Settings UI** — manage bars, mouseover mode, and scale from the Consumes Manager settings panel
+
+---
+
+## Requirements
+
+- [SuperWoW](https://github.com/balakethelock/SuperWoW) — required for buff tracking via spell ID
+
+---
+
+## Installation
+
+1. Download and extract to your `Interface/AddOns/` folder as `ConsumesManager`
+2. The `Textures` folder must be present inside the addon folder (included)
+3. Reload UI or log in
+
+---
+
+## Slash Commands
+
+| Command | Description |
+|---|---|
+| `/cmbar` | Show or hide all bars |
+| `/cmbaredit` | Toggle edit mode |
+| `/cmbarscale <0.5–2.0>` | Set bar scale (e.g. `/cmbarscale 1.2`) |
+| `/cmbarmouseover` | Toggle mouseover mode |
+| `/cmbarreset` | Reset all bar positions to default |
+| `/cmbarresetorder` | Reset all custom icon ordering |
+| `/cmbarresetglow` | Reset all custom glow reminder settings |
+
+---
+
+## Edit Mode
+
+Enter edit mode with `/cmbaredit` or via the Settings panel.
+
+In edit mode:
+- **Right-click** an icon to assign it to a different bar
+- **`<>` swap buttons** appear between icons to reorder them
+- **`^>` orientation button** appears on each bar to toggle horizontal/vertical layout
+- Bar name labels are shown below each bar
+- Bars with the hidden flag still appear so they can be managed
+
+---
+
+## Credits
+
+- Original addon by [Cinecom](https://github.com/Cinecom/ConsumesManager)
+- Glow effect by DoiteGlow (bundled with permission)
+- Built for use with [SuperWoW](https://github.com/balakethelock/SuperWoW)
 
 original readme below:
 
