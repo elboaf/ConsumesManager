@@ -75,7 +75,7 @@ In edit mode:
 ## Credits
 
 - Original addon by [Cinecom](https://github.com/Cinecom/ConsumesManager)
-- Glow effect by DoiteGlow (bundled with permission)
+- Glow effect by DoiteGlow :)
 - Built for use with [SuperWoW](https://github.com/balakethelock/SuperWoW)
 
 original readme below:
