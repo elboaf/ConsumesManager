@@ -769,6 +769,8 @@ function ConsumesManagerBar_DeleteBar(barID)
                 if sb then sb:Hide() end
             end
         end
+        if bf.orientBtn then bf.orientBtn:Hide() end
+        if bf.dragHandle then bf.dragHandle:Hide() end
         bf:Hide()
         barFrames[barID] = nil
     end
@@ -1460,19 +1462,40 @@ function ConsumesManagerBar_UpdateSingleBar(frame, items, barID)
     -- SWAP BUTTONS: parented to UIParent (not bar frame) so they aren't
     -- clipped by the bar frame's bounding box. One button per adjacent pair,
     -- positioned just above the gap between icon i and icon i+1.
-    local swapSize = math.max(12, math.floor(16 * scale))
+    local swapSize = math.max(10, math.floor(12 * scale))
     for i = 1, itemCount - 1 do
         local sb = frame.swapBtns[i]
         if not sb then
-            sb = CreateFrame("Button", frame:GetName() .. "Swap" .. i, UIParent, "UIPanelButtonTemplate")
+            sb = CreateFrame("Button", frame:GetName() .. "Swap" .. i, UIParent)
             sb:SetFrameStrata("HIGH")
-            sb:SetScript("OnLeave", function() GameTooltip:Hide() end)
+            sb:EnableMouse(true)
+            sb:SetBackdrop({
+                bgFile   = "Interface\\Tooltips\\UI-Tooltip-Background",
+                edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+                tile = true, tileSize = 8, edgeSize = 8,
+                insets = { left = 2, right = 2, top = 2, bottom = 2 }
+            })
+            sb:SetBackdropColor(0.25, 0.25, 0.25, 0.9)
+            sb:SetBackdropBorderColor(0.5, 0.5, 0.5, 0.6)
+            local sblbl = sb:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            sblbl:SetAllPoints(sb)
+            sblbl:SetJustifyH("CENTER")
+            sblbl:SetJustifyV("MIDDLE")
+            sblbl:SetTextColor(0.7, 0.7, 0.7, 1)
+            sblbl:SetText("<>")
+            sb.lbl = sblbl
+            sb:SetScript("OnEnter", function()
+                this:SetBackdropColor(0.35, 0.35, 0.35, 0.9)
+            end)
+            sb:SetScript("OnLeave", function()
+                this:SetBackdropColor(0.25, 0.25, 0.25, 0.9)
+                GameTooltip:Hide()
+            end)
             frame.swapBtns[i] = sb
         end
 
         sb:SetWidth(swapSize * 2)
         sb:SetHeight(swapSize)
-        sb:SetText("<>")
         sb:ClearAllPoints()
 
         if vertical then
@@ -1505,16 +1528,35 @@ function ConsumesManagerBar_UpdateSingleBar(frame, items, barID)
 
     -- Orient toggle button (edit mode only, parented to UIParent)
     if not frame.orientBtn then
-        local ob = CreateFrame("Button", frame:GetName() .. "OrientBtn", UIParent, "UIPanelButtonTemplate")
+        local ob = CreateFrame("Button", frame:GetName() .. "OrientBtn", UIParent)
         ob:SetFrameStrata("HIGH")
-        ob:SetText("^>")
+        ob:EnableMouse(true)
+        ob:SetBackdrop({
+            bgFile   = "Interface\\Tooltips\\UI-Tooltip-Background",
+            edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+            tile = true, tileSize = 8, edgeSize = 8,
+            insets = { left = 2, right = 2, top = 2, bottom = 2 }
+        })
+        ob:SetBackdropColor(0.25, 0.25, 0.25, 0.9)
+        ob:SetBackdropBorderColor(0.5, 0.5, 0.5, 0.6)
+        local oblbl = ob:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        oblbl:SetAllPoints(ob)
+        oblbl:SetJustifyH("CENTER")
+        oblbl:SetJustifyV("MIDDLE")
+        oblbl:SetTextColor(0.7, 0.7, 0.7, 1)
+        oblbl:SetText("^>")
+        ob.lbl = oblbl
         ob:SetScript("OnEnter", function()
+            this:SetBackdropColor(0.35, 0.35, 0.35, 0.9)
             GameTooltip:SetOwner(this, "ANCHOR_TOP")
             GameTooltip:SetText("Toggle orientation")
             GameTooltip:AddLine("Switch between horizontal and vertical", 1, 1, 1)
             GameTooltip:Show()
         end)
-        ob:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        ob:SetScript("OnLeave", function()
+            this:SetBackdropColor(0.25, 0.25, 0.25, 0.9)
+            GameTooltip:Hide()
+        end)
         ob:SetScript("OnClick", function()
             local isVert = ConsumesManagerBar_IsBarVertical(frame.barID)
             ConsumesManagerBar_SetBarVertical(frame.barID, not isVert or nil)
@@ -1523,7 +1565,7 @@ function ConsumesManagerBar_UpdateSingleBar(frame, items, barID)
     end
 
     local ob = frame.orientBtn
-    local obSize = math.max(16, math.floor(22 * scale))
+    local obSize = math.max(10, math.floor(12 * scale))
     ob:SetWidth(obSize * 2)
     ob:SetHeight(obSize)
     ob:ClearAllPoints()
@@ -1533,6 +1575,55 @@ function ConsumesManagerBar_UpdateSingleBar(frame, items, barID)
         ob:SetPoint("RIGHT", frame, "LEFT", -3, 0)
     end
     if editMode and itemCount > 0 then ob:Show() else ob:Hide() end
+
+    -- Drag handle (edit mode only, parented to UIParent)
+    if not frame.dragHandle then
+        local dh = CreateFrame("Frame", frame:GetName() .. "DragHandle", UIParent)
+        dh:SetFrameStrata("HIGH")
+        dh:EnableMouse(true)
+        dh:SetBackdrop({
+            bgFile   = "Interface\\Tooltips\\UI-Tooltip-Background",
+            edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+            tile = true, tileSize = 8, edgeSize = 8,
+            insets = { left = 2, right = 2, top = 2, bottom = 2 }
+        })
+        dh:SetBackdropColor(0.25, 0.25, 0.25, 0.9)
+        dh:SetBackdropBorderColor(0.5, 0.5, 0.5, 0.6)
+        -- Dotted grip lines label
+        local grip = dh:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        grip:SetAllPoints(dh)
+        grip:SetJustifyH("CENTER")
+        grip:SetJustifyV("MIDDLE")
+        grip:SetTextColor(0.6, 0.6, 0.6, 1)
+        grip:SetText("= = =")
+        dh.grip = grip
+        dh:SetScript("OnEnter", function()
+            this:SetBackdropColor(0.35, 0.35, 0.35, 0.9)
+            GameTooltip:SetOwner(this, "ANCHOR_TOP")
+            GameTooltip:SetText("Drag to move bar")
+            GameTooltip:Show()
+        end)
+        dh:SetScript("OnLeave", function()
+            this:SetBackdropColor(0.25, 0.25, 0.25, 0.9)
+            GameTooltip:Hide()
+        end)
+        dh:SetScript("OnMouseDown", function()
+            if arg1 == "LeftButton" then frame:StartMoving() end
+        end)
+        dh:SetScript("OnMouseUp", function()
+            frame:StopMovingOrSizing()
+            ConsumesManagerBar_SaveAllPositions()
+            ConsumesManagerBar_UpdateMouseoverHitFrame()
+        end)
+        dh:RegisterForDrag("LeftButton")
+        dh:SetScript("OnDragStart", function() frame:StartMoving() end)
+        dh:SetScript("OnDragStop", function()
+            frame:StopMovingOrSizing()
+            ConsumesManagerBar_SaveAllPositions()
+            ConsumesManagerBar_UpdateMouseoverHitFrame()
+        end)
+        frame.dragHandle = dh
+    end
 
     -- Resize / show-hide bar
     if itemCount > 0 then
@@ -1547,6 +1638,23 @@ function ConsumesManagerBar_UpdateSingleBar(frame, items, barID)
     else
         frame:Hide()
     end
+
+    -- Size and position drag handle after frame is resized
+    local dh = frame.dragHandle
+    local dhThick = math.max(10, math.floor(12 * scale))
+    dh:ClearAllPoints()
+    if vertical then
+        dh:SetWidth(dhThick)
+        dh:SetHeight(frame:GetHeight())
+        dh:SetPoint("TOPRIGHT", frame, "TOPLEFT", -2, 0)
+        if dh.grip then dh.grip:SetText("·\n·\n·") end
+    else
+        dh:SetWidth(frame:GetWidth())
+        dh:SetHeight(dhThick)
+        dh:SetPoint("TOPLEFT", frame, "BOTTOMLEFT", 0, -2)
+        if dh.grip then dh.grip:SetText("= = =") end
+    end
+    if editMode and itemCount > 0 then dh:Show() else dh:Hide() end
 end
 -- ============================================================
 -- ICON TIMER DISPLAY
