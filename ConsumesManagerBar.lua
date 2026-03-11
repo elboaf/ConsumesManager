@@ -1809,7 +1809,9 @@ function ConsumesManagerBar_Initialize()
 
     -- Apply mouseover mode startup state
     mouseoverMode = ConsumesManagerBar_Settings2.mouseoverMode or false
+    ConsumesManagerBar_UpdateBars()
     if mouseoverMode then
+        mouseoverVisible = false
         ConsumesManagerBar_SetAllBarsAlpha(0)
         ConsumesManagerBar_CreateMouseoverHitFrame()
     end
