@@ -1,33 +1,8 @@
 # ConsumesManager
 
-A consumables tracking and buff bar addon for World of Warcraft 1.12 (Vanilla), built on SuperWoW.
+A consumables tracking, buff bar, and inventory management addon for World of Warcraft 1.12 (Vanilla), built on SuperWoW.
 
 Forked from [Cinecom/ConsumesManager](https://github.com/Cinecom/ConsumesManager).
-
----
-
-## Features
-
-### Consumables Tracker
-- Tracks consumables, food buffs, flasks, elixirs, poisons, and more across your inventory, bank, and mail
-- Supports multiple characters and accounts
-- Includes updated concoction recipes and an expanded item list with spell IDs for accurate buff detection
-
-### Buff Bar
-A dynamic action bar that displays your tracked consumables as clickable icons. Click an icon to use the item directly from your bags.
-
-- **Multiple bars** — create as many bars as you need, each independently positioned and configured
-- **Horizontal or vertical orientation** — toggle per bar in edit mode
-- **Buff tracking** — icons show your current buff status using SuperWoW's updated `UnitBuff()` (spell ID based) and `GetWeaponEnchantInfo()` for weapon enchants
-- **Cooldown display** — item cooldown sweeps shown directly on each icon
-- **Buff timer** — remaining buff duration shown on buffed icons
-- **Item count** — current bag count displayed on each icon
-- **Glow reminder** — animated glow on icons where your buff is missing or expired (powered by bundled DoiteGlow)
-- **Mouseover mode** — bars fade out and only appear when you mouse over them
-- **Scalable** — resize all bars globally with `/cmbarscale`
-- **Icon reordering** — drag icons left/right (or up/down in vertical mode) within a bar using swap buttons in edit mode
-- **Per-bar show/hide** — hide individual bars without deleting them
-- **Settings UI** — manage bars, mouseover mode, and scale from the Consumes Manager settings panel
 
 ---
 
@@ -41,7 +16,85 @@ A dynamic action bar that displays your tracked consumables as clickable icons. 
 
 1. Download and extract to your `Interface/AddOns/` folder as `ConsumesManager`
 2. The `Textures` folder must be present inside the addon folder (included)
-3. Reload UI or log in
+3. Log in or `/reload`
+
+---
+
+## Features
+
+### Consumables Tracker
+Tracks consumables across your inventory, bank, and mail. Supports elixirs, flasks, food buffs, poisons, weapon enchants, and more — including Turtle WoW custom items and concoction elixirs.
+
+- Per-character tracking — each character has their own selected items and settings
+- Bank scanning when the bank is open; mail scanning when the mailbox is open
+- Tooltips show per-character breakdown of where items are located
+
+### Buff Bar
+A dynamic action bar displaying your tracked consumables as clickable icons. Click an icon to use the item directly from your bags.
+
+- **Multiple bars** — create as many named bars as you need, each independently positioned
+- **Buff tracking** — icons reflect your current buff status using SuperWoW's spell ID based `UnitBuff()` and `GetWeaponEnchantInfo()`
+- **Cooldown sweep** — item cooldown displayed directly on each icon
+- **Buff timer** — remaining duration shown on active buff icons
+- **Item count** — current bag count shown on each icon
+- **Glow reminder** — animated glow on icons where your buff is missing or expired (powered by DoiteGlow)
+- **Mouseover mode** — bars fade out and reappear only on hover
+- **Scalable** — resize all bars globally via settings or `/cmbarscale`
+- **Icon reordering** — swap icons left/right (or up/down in vertical mode) in edit mode
+- **Per-bar show/hide** — hide individual bars without removing them
+- **Horizontal or vertical layout** — toggle per bar in edit mode
+
+### Auction House Shopping List
+A panel that appears automatically below the aux AH window when you open the auction house, showing your consumes and their crafting reagents.
+
+- **Left-click** a consume row to search the AH for that item
+- **Right-click** a consume row to expand its crafting reagent list
+- **Left-click** a reagent row to search the AH for that reagent
+- Sorted by quantity ascending — missing items at the top
+- Reagent item links use `MatIDs.lua` for accurate aux item ID searches, with name-search fallback
+- Supports `"search"` sentinel values for items with no single canonical ID (e.g. Bijou — searches all colours)
+- **BOP items** (e.g. Jujus, Blasted Lands turn-ins) are handled specially:
+  - Single-mat BOP: left-click searches the reagent directly
+  - Multi-mat BOP: left-click expands the reagent list
+- Panel collapses to a slim header bar via the `[-]/[+]` toggle button
+- Mousewheel, arrow buttons, and a scrollbar for navigation
+
+### Multi-Character Manager
+A file-based cross-character inventory system powered by SuperWoW's `ImportFile`/`ExportFile` API. No simultaneous login required — each character writes a snapshot file independently.
+
+#### How it works
+- Every character automatically exports their full consumables inventory (bags + bank) to `imports/CM_CharName.txt` on `BAG_UPDATE` and when the bank closes
+- A manifest file (`imports/CM_manifest.txt`) tracks all known characters
+- Manager characters read all character files on login and on demand via the **Sync** button
+
+#### Manager Mode
+Enable **Manager Mode** on a character via the **Network** tab in the Consumes Manager window. Manager characters get access to:
+
+**Stock Overview** (right-click the minimap icon, or via the Network tab):
+- Floating grid window showing all configured consumes across all characters
+- Rows = consumes (only items at least one character uses), columns = characters
+- Sorted by non-BOP items first, then BOP items; within each group by total count ascending
+- Manager character columns appear on the left in gold; non-manager columns on the right in grey
+- Per-character tabs to view a single character's inventory in isolation
+- Zebra-striped rows for readability
+- Tooltips on hover; scrollable with mousewheel and scrollbar
+- **Refresh** button to re-read all character files
+
+**Manager AH Shopping List** (replaces the standard shopping list when manager mode is on):
+- Flat list of all configured consumes across all characters, total count shown
+- BOP items shown below non-BOP items, with per-character breakdown (so you know how many reagents each toon needs)
+- Sorted by quantity ascending within each group
+
+#### Network Tab
+The Network tab in the Consumes Manager window provides per-character sync settings:
+
+- **Manager Mode** checkbox — enables the stock overview and manager shopping list
+- **Sync** button — exports your inventory immediately; managers also import all character files
+- **Stock Overview** button — opens/closes the manager grid window (managers only)
+- **Tracked Characters** list (managers only) — uncheck any character to hide them from the overview and shopping list without affecting their file exports
+
+#### Character Exclusion
+Any character can be hidden from the manager overview by unchecking them in the manager's **Tracked Characters** list. Their inventory data continues to be exported — they are simply filtered out of the manager's view.
 
 ---
 
@@ -61,172 +114,120 @@ A dynamic action bar that displays your tracked consumables as clickable icons. 
 
 ## Edit Mode
 
-Enter edit mode with `/cmbaredit` or via the Settings panel.
+Enter edit mode with `/cmbaredit` or via the Settings tab.
 
 In edit mode:
 - **Right-click** an icon to assign it to a different bar
 - **`<>` swap buttons** appear between icons to reorder them
 - **`^>` orientation button** appears on each bar to toggle horizontal/vertical layout
 - Bar name labels are shown below each bar
-- Bars with the hidden flag still appear so they can be managed
+- Hidden bars still appear so they can be managed
+
+---
+
+## New Files (2.3.x)
+
+| File | Purpose |
+|---|---|
+| `AuctionShoppingList.lua` | AH shopping list panel |
+| `MatIDs.lua` | Reagent name → item ID lookup table |
+| `CM_FileSync.lua` | Per-character file export/import system |
+| `CM_ManagerView.lua` | Stock overview grid window |
 
 ---
 
 ## Credits
 
-- Original addon by [Cinecom](https://github.com/Cinecom/ConsumesManager)
-- Glow effect by DoiteGlow :)
-- Built for use with [SuperWoW](https://github.com/balakethelock/SuperWoW)
+- Original addon by [Horyoshi / Cinecom](https://github.com/Cinecom/ConsumesManager)
+- Glow effect by DoiteGlow
+- Built for [Turtle WoW](https://turtle-wow.org) with [SuperWoW](https://github.com/balakethelock/SuperWoW)
 
-
-# Changelog
-
-## 2.3.0
-
-### Added: Auction House Shopping List
-
-A new panel appears automatically below the aux auction house window whenever you open the AH, listing all your selected consumes and their crafting reagents.
-
-#### Panel behaviour
-- Anchors flush below the aux frame (or to the right of the vanilla AH frame as a fallback)
-- A **[-] / [+]** button in the panel header collapses the panel down to a slim title bar when you need it out of the way — collapsed state persists while the AH is open
-- Mousewheel and up/down arrow buttons scroll the list; a scrollbar provides drag-to-scroll
-- Panel background is fully opaque for readability
-
-#### Consume rows
-- All selected consumes are listed, sorted by category order
-- **White name + green count** — you have this consume somewhere across your tracked characters
-- **Red name + red [0]** — you are missing this consume entirely
-- **Left-click** — searches the AH for that consume
-- **Right-click** — expands or collapses the crafting reagent list for that consume
-- **[+] / [-]** indicator on the right shows whether a consume has reagents and whether they are expanded
-
-#### Reagent sub-rows
-- Expand per-consume to see each crafting mat indented below it, with quantity and item quality colour
-- **Left-click** a reagent row to search the AH for that reagent
-
-#### BOP / non-auctionable items (`bop = true`)
-Items that cannot be purchased on the AH (e.g. Jujus, Blasted Lands turn-ins) are flagged with `bop = true` in the itemlist. The shopping list handles them specially:
-- **Single-mat BOP** (e.g. Juju Flurry): left-click directly searches the one reagent (e.g. Frostsaber E'ko) rather than the item itself
-- **Multi-mat BOP** (e.g. R.O.I.D.S.): left-click expands the reagent list; tooltip shows `Not on AH`
-- Right-click expand/collapse works normally on all BOP items
-
-#### aux integration
-- Uses aux's internal `CLICK_LINK` API with a proper `item_info` object for item-link searches
-- Falls back to walking the aux frame hierarchy to set the search box text and programmatically click the Search button for name-based searches (used for sentinels and uncached items)
-- Vanilla AH (`BrowseName` + `AuctionFrameBrowse_Search`) as final fallback
-
-#### MatIDs.lua (new file)
-A lookup table mapping reagent names to item IDs, used to construct item links for the aux search API. Covers all crafting mats present in the itemlist including Turtle WoW custom items. Supports a `"search"` sentinel value for items with no single canonical ID (e.g. `["Bijou"] = "search"`), which triggers a plain name search instead of an item link lookup.
-
-#### Concoction elixirs (edge case)
-Concoctions use other tracked elixirs as reagents (e.g. Elixir of the Mongoose, Dreamshard Elixir). Rather than duplicating IDs in MatIDs, the shopping list resolves these at runtime by looking up the reagent name in `consumablesCategories` directly.
-
-#### New files
-- `AuctionShoppingList.lua` — the shopping list feature
-- `MatIDs.lua` — reagent name → item ID lookup table
-
-
-
-
-# Original readme below:
-
-# Consumes Manager
-Easily track and manage your consumables, food buffs, and more across your inventory, bank, and mail, while supporting multiple characters and accounts.
-Created with ♥ by Horyoshi for World of Warcraft 1.12 **Turtle WoW**
-
-[![Consumes Manager Video Tutorial](https://i.ibb.co/Dfkc7VK/Consumes-Manager-video.jpg)](https://www.youtube.com/watch?v=GMo-7vIHxl0)
-
-## How To
-
-Unzip the file and place the 'ConsumesManager' folder in your /Interface/AddOns folder. Remove '-master' from the folder name!
-
-Click the mini-map icon to open/close the Tracker. For a detailled overview watch the tutorial video on top.
+---
 
 ## Changelog
+
+### 2.3.1
+- All settings and selected items are now **per-character** — configuring consumables on one character no longer affects others
+- Manager mode and exclude flags moved to a dedicated per-character saved variable (`ConsumesManager_CharOptions`)
+- Stock overview column headers now distinguish managers (gold, left columns) from non-managers (grey, right columns)
+- Stock overview and shopping list sorted by non-BOP items first, then BOP; within each group by quantity ascending
+- Network tab is now scrollable
+- Fixed `string.gmatch` and `string.match` calls replaced with Lua 5.0 compatible `string.gfind` and `string.find`
+- Fixed modulo operator (`%`) replaced with `math.mod` for Lua 5.0 compatibility
+- Minimap button tooltip updated to show right-click hint when manager mode is enabled
+
+### 2.3.0
+- Added AH Shopping List panel (aux integration)
+- Added Multi-Character Manager with file-based sync
+- Added Stock Overview window
+- Added Network tab to main window
+- Added `MatIDs.lua` reagent lookup table
+- Added `CM_FileSync.lua` and `CM_ManagerView.lua`
+- Added BOP item handling in shopping list and itemlist (`bop = true` flag)
+- Removed "Made by Horyoshi" footer attribution
+- Footer now shows addon name and version only
+
+### 2.2.x and earlier
+See original changelog below.
+
+---
+
+## Original Changelog
+
+**2.2.x**
+- Cross-faction support
+- Various bug fixes and item list updates
+
 **2.1.0**
-```
-- Added a new feature which makes the addon crossfaction compatible
-```
+- Added cross-faction compatibility
 
 **2.0.4**
-```
-- Fixed a bug where the count of the consumes in your bank would reset
+- Fixed bank count reset bug
 - Added magic resistance and invisibility potions
-```
 
 **2.0.3**
-```
-- Fixed a bug where multi-account characters where not selected by default
-```
+- Fixed multi-account characters not selected by default
 
 **2.0.2**
-```
-- Fixed a compatibility issue with other addons where the bank would not scan
-- Added a delay to the scanning functions to avoid performance issues or client crashes
-- Fixed a UI bug in the syncing progress bar
-- Added compatibility with SuperWoW for consumables that have charges
-```
+- Fixed bank scanning compatibility issue
+- Added scanning delay to prevent performance issues
+- Fixed syncing progress bar UI bug
+- Added SuperWoW compatibility for consumables with charges
 
 **2.0.1**
-```
-- Fixed a compatibility issue with Onebag
-- Added some food buffs to the item list
-```
+- Fixed OneBag compatibility
+- Added food buffs to item list
 
 **2.0**
-```
-- Added a new feature which allows syncing between multiple accounts (in beta)
-- Added new consumes to the itemlist
-- Added materials or objectives needed to make the consumes in the tooltips
-- Fixed some wrong ID's in the itemlist
-- Increased Performance in item scanning
-- Added class color codes to the preset lists and ordered the items better
-```
+- Multi-account syncing (beta)
+- New consumes added to item list
+- Materials shown in tooltips
+- Performance improvements
 
 **1.8**
-```
-- Added new consumables and fixed some mismatched icons
-- Added a new feature that shows a list of must-have consumables per class per raid
-- Fixed an issue where settings did not save
-- Disables the Items and Presets window if the character has not been scanned yet
-- Fixed an issue where disabled characters corrupted the Data table
-```
+- New consumables and icon fixes
+- Per-class per-raid preset lists
+- Various bug fixes
 
 **1.7**
-```
-- Added a reset button to wipe all settings and caches
-- Added buttons to order by name or amount in the tracker window
-```
+- Reset button added
+- Sort by name or amount in tracker
 
-**V1.6**
-```
-- Added more items to the consumables list
-- UI changes to the tabs
-- Added an option to show/hide a 'use'
-- Added an option to show/hide categories
-- Small UI fixes
-```
+**1.6**
+- More consumables
+- UI improvements
+- Show/hide use button option
+- Show/hide categories option
 
+**1.5**
+- Turtle WoW launcher support
+- Renamed to Consumes Manager
+- Added Use button
+- Select/deselect all button
+- Global scanning
 
-**V1.5**
-```
-- Can now be updated via the Turtle WoW launcher
-- Changed Addon name to: Consumes Manager
-- Fixed general styling issues
-- Added a 'Use' button for tracked consumables
-- Added a select/deselect all button to the options
-- Changed scanning to global instead of selected items only
-```
-
-<img width="680" alt="image" src="https://github.com/user-attachments/assets/07fbaeb2-fb67-463f-a743-a28db6d82adc">
-
-**V1.4**
-```
+**1.4**
 - Updated consumables list
-- Fixed icons and ID's for all consumables
-- Fixed an issue where the consumables counting could be a negative value
-- Added a search filter in the options window
-- Fixed general styling issues
-- You can now close the addon window by pressing 'Esc'
-```
+- Icon and ID fixes
+- Search filter in options
+- Esc to close window
