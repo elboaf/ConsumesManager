@@ -78,7 +78,56 @@ In edit mode:
 - Glow effect by DoiteGlow :)
 - Built for use with [SuperWoW](https://github.com/balakethelock/SuperWoW)
 
-original readme below:
+
+# Changelog
+
+## 2.3.0
+
+### Added: Auction House Shopping List
+
+A new panel appears automatically below the aux auction house window whenever you open the AH, listing all your selected consumes and their crafting reagents.
+
+#### Panel behaviour
+- Anchors flush below the aux frame (or to the right of the vanilla AH frame as a fallback)
+- A **[-] / [+]** button in the panel header collapses the panel down to a slim title bar when you need it out of the way — collapsed state persists while the AH is open
+- Mousewheel and up/down arrow buttons scroll the list; a scrollbar provides drag-to-scroll
+- Panel background is fully opaque for readability
+
+#### Consume rows
+- All selected consumes are listed, sorted by category order
+- **White name + green count** — you have this consume somewhere across your tracked characters
+- **Red name + red [0]** — you are missing this consume entirely
+- **Left-click** — searches the AH for that consume
+- **Right-click** — expands or collapses the crafting reagent list for that consume
+- **[+] / [-]** indicator on the right shows whether a consume has reagents and whether they are expanded
+
+#### Reagent sub-rows
+- Expand per-consume to see each crafting mat indented below it, with quantity and item quality colour
+- **Left-click** a reagent row to search the AH for that reagent
+
+#### BOP / non-auctionable items (`bop = true`)
+Items that cannot be purchased on the AH (e.g. Jujus, Blasted Lands turn-ins) are flagged with `bop = true` in the itemlist. The shopping list handles them specially:
+- **Single-mat BOP** (e.g. Juju Flurry): left-click directly searches the one reagent (e.g. Frostsaber E'ko) rather than the item itself
+- **Multi-mat BOP** (e.g. R.O.I.D.S.): left-click expands the reagent list; tooltip shows `Not on AH`
+- Right-click expand/collapse works normally on all BOP items
+
+#### aux integration
+- Uses aux's internal `CLICK_LINK` API with a proper `item_info` object for item-link searches
+- Falls back to walking the aux frame hierarchy to set the search box text and programmatically click the Search button for name-based searches (used for sentinels and uncached items)
+- Vanilla AH (`BrowseName` + `AuctionFrameBrowse_Search`) as final fallback
+
+#### MatIDs.lua (new file)
+A lookup table mapping reagent names to item IDs, used to construct item links for the aux search API. Covers all crafting mats present in the itemlist including Turtle WoW custom items. Supports a `"search"` sentinel value for items with no single canonical ID (e.g. `["Bijou"] = "search"`), which triggers a plain name search instead of an item link lookup.
+
+#### Concoction elixirs (edge case)
+Concoctions use other tracked elixirs as reagents (e.g. Elixir of the Mongoose, Dreamshard Elixir). Rather than duplicating IDs in MatIDs, the shopping list resolves these at runtime by looking up the reagent name in `consumablesCategories` directly.
+
+#### New files
+- `AuctionShoppingList.lua` — the shopping list feature
+- `MatIDs.lua` — reagent name → item ID lookup table
+
+
+### original readme below:
 
 # Consumes Manager
 Easily track and manage your consumables, food buffs, and more across your inventory, bank, and mail, while supporting multiple characters and accounts.
