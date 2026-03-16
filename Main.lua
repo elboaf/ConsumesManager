@@ -3,15 +3,33 @@
 
     function ConsumesManager_OnLoad(self)
         self:RegisterForDrag("LeftButton")
+        self:RegisterForClicks("LeftButtonUp", "RightButtonUp")
         self:SetScript("OnDragStart", function() ConsumesManager_OnDragStart(self) end)
         self:SetScript("OnDragStop", function() ConsumesManager_OnDragStop(self) end)
-         self:SetScript("OnClick", ConsumesManager_HandleClick)
+        self:SetScript("OnClick", ConsumesManager_HandleClick)
+        self:SetScript("OnEnter", function()
+            GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+            GameTooltip:SetText("Consumes Manager", 1, 1, 1)
+            GameTooltip:AddLine("Left-click: open tracker", 0.8, 0.8, 0.8)
+            if ConsumesManager_CharOptions and ConsumesManager_CharOptions.isManager then
+                GameTooltip:AddLine("Right-click: stock overview", 0.8, 0.8, 0.8)
+            end
+            GameTooltip:AddLine("Shift + drag: move", 0.5, 0.5, 0.5)
+            GameTooltip:Show()
+        end)
+        self:SetScript("OnLeave", function()
+            GameTooltip:Hide()
+        end)
     end
 
     function ConsumesManager_HandleClick(self, button)
-        -- Only respond to left-clicks without the Shift key pressed
-        if button == "LeftButton" and not IsShiftKeyDown() then
-            -- Toggle the visibility of the main frame
+        if button == "RightButton" then
+            -- Right-click: toggle manager stock overview (if manager mode enabled)
+            if ConsumesManager_CharOptions and ConsumesManager_CharOptions.isManager then
+                if CM_ManagerView_Toggle then CM_ManagerView_Toggle() end
+            end
+        elseif button == "LeftButton" and not IsShiftKeyDown() then
+            -- Left-click: toggle the main window
             if ConsumesManager_MainFrame and ConsumesManager_MainFrame:IsShown() then
                 ConsumesManager_MainFrame:Hide()
             else
@@ -43,6 +61,9 @@
     end
     if not ConsumesManager_Data then
         ConsumesManager_Data = {}
+    end
+    if not ConsumesManager_CharOptions then
+        ConsumesManager_CharOptions = {}
     end
 
 -- Event frame for updating data ------------------------------------------------------------------------
@@ -491,9 +512,16 @@ function ConsumesManager_CreateMainWindow()
     end
     tab4:SetScript("OnClick", tab4.originalOnClick)
 
+    -- Network Tab
+    local tab5 = CreateTab("ConsumesManager_MainFrameTab5", "Interface\\Icons\\INV_Misc_Note_06", 230, "Network", 5)
+    tab5.originalOnClick = function()
+        ConsumesManager_ShowTab(5)
+    end
+    tab5:SetScript("OnClick", tab5.originalOnClick)
+
 
     -- Send Data Button
-    sendDataButton = CreateTab("ConsumesManager_sendDataButton", "Interface\\Icons\\inv_misc_punchcards_prismatic", 280, "Push Data", 5)
+    sendDataButton = CreateTab("ConsumesManager_sendDataButton", "Interface\\Icons\\inv_misc_punchcards_prismatic", 310, "Push Data", 6)
     function updateSenDataButtonState()
         if ConsumesManager_Options.Channel == nil or ConsumesManager_Options.Channel == "" or ConsumesManager_Options.Password == nil or ConsumesManager_Options.Password == "" then
             sendDataButton:Hide()
@@ -544,9 +572,15 @@ function ConsumesManager_CreateMainWindow()
     tab4Content:SetPoint("TOPLEFT", ConsumesManager_MainFrame, "TOPLEFT", 30, -80)
     ConsumesManager_MainFrame.tabs[4] = tab4Content
 
+    local tab5Content = CreateFrame("Frame", nil, ConsumesManager_MainFrame)
+    tab5Content:SetWidth(WindowWidth - 50)
+    tab5Content:SetHeight(380)
+    tab5Content:SetPoint("TOPLEFT", ConsumesManager_MainFrame, "TOPLEFT", 30, -80)
+    ConsumesManager_MainFrame.tabs[5] = tab5Content
+
     -- Footer Button to Push Database
     local footerText = ConsumesManager_MainFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    footerText:SetText("Made by Horyoshi (v" .. GetAddOnMetadata("ConsumesManager", "Version") .. ")")
+    footerText:SetText("ConsumesManager (v" .. GetAddOnMetadata("ConsumesManager", "Version") .. ")")
     footerText:SetTextColor(0.6, 0.6, 0.6)
     footerText:SetPoint("BOTTOM", ConsumesManager_MainFrame, "BOTTOM", 0, 15)
 
@@ -569,6 +603,8 @@ function ConsumesManager_CreateMainWindow()
     -- Settings tab is initialized via UpdateSettingsContent which sets up scroll frames first
     ConsumesManager_MainFrame.tabs[4] = tab4Content
     ConsumesManager_UpdateSettingsContent()
+    -- Network tab
+    ConsumesManager_UpdateNetworkContent()
 
     ConsumesManager_UpdateTabStates()
 end
@@ -2710,6 +2746,7 @@ function ConsumesManager_CreateSettingsContent(parentFrame)
 
     RenderBarsList()
 
+
     -- -----------------------------------------------------------------------
     -- Finish scroll area
     -- -----------------------------------------------------------------------
@@ -2811,6 +2848,222 @@ function ConsumesManager_UpdateSettingsScrollBar()
 end
 
 
+
+-- Network Tab ---------------------------------------------------------------------------------
+function ConsumesManager_UpdateNetworkContent()
+    local parentFrame = ConsumesManager_MainFrame and ConsumesManager_MainFrame.tabs and ConsumesManager_MainFrame.tabs[5]
+    if not parentFrame then return end
+
+    -- First-time setup: create scrollFrame and scrollBar if not yet created
+    if not parentFrame.scrollFrame then
+        local sf = CreateFrame("ScrollFrame", "ConsumesManager_NetworkScrollFrame", parentFrame)
+        sf:SetPoint("TOPLEFT",     parentFrame, "TOPLEFT",      0,  0)
+        sf:SetPoint("BOTTOMRIGHT", parentFrame, "BOTTOMRIGHT", -20, 0)
+        sf:EnableMouseWheel(true)
+        sf:SetScript("OnMouseWheel", function()
+            local delta = arg1
+            local cur   = this:GetVerticalScroll()
+            local maxS  = this.maxScroll or 0
+            local newS  = math.max(0, math.min(cur - delta * 20, maxS))
+            this:SetVerticalScroll(newS)
+            if parentFrame.scrollBar then parentFrame.scrollBar:SetValue(newS) end
+        end)
+        parentFrame.scrollFrame = sf
+    end
+
+    if not parentFrame.scrollBar then
+        local sb = CreateFrame("Slider", "ConsumesManager_NetworkScrollBar", parentFrame)
+        sb:SetPoint("TOPRIGHT",    parentFrame, "TOPRIGHT",    -2, -4)
+        sb:SetPoint("BOTTOMRIGHT", parentFrame, "BOTTOMRIGHT", -2,  4)
+        sb:SetWidth(16)
+        sb:SetOrientation("VERTICAL")
+        sb:SetThumbTexture("Interface\\Buttons\\UI-ScrollBar-Knob")
+        sb:SetBackdrop({
+            bgFile   = "Interface\\Buttons\\UI-SliderBar-Background",
+            edgeFile = "Interface\\Buttons\\UI-SliderBar-Border",
+            tile = true, tileSize = 8, edgeSize = 8,
+            insets = { left = 3, right = 3, top = 3, bottom = 3 }
+        })
+        sb:SetScript("OnValueChanged", function()
+            if parentFrame.scrollFrame then
+                parentFrame.scrollFrame:SetVerticalScroll(this:GetValue())
+            end
+        end)
+        parentFrame.scrollBar = sb
+    end
+
+    -- Discard old scroll child and build a fresh one
+    local oldChild = parentFrame.scrollFrame:GetScrollChild()
+    if oldChild then
+        oldChild:Hide()
+        oldChild:SetParent(nil)
+        parentFrame.scrollFrame:SetScrollChild(nil)
+    end
+
+    local child = CreateFrame("Frame", nil, parentFrame.scrollFrame)
+    child:SetWidth(WindowWidth - 70)
+    child:SetHeight(1)
+    child.contentHeight = 0
+    parentFrame.scrollFrame:SetScrollChild(child)
+    parentFrame.scrollChild = child
+
+    local LH   = 22
+    local yOff = -8
+
+    local function SectionTitle(text)
+        local lbl = child:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+        lbl:SetPoint("TOPLEFT", child, "TOPLEFT", 0, yOff)
+        lbl:SetText(text)
+        lbl:SetTextColor(1, 0.82, 0)
+        yOff = yOff - LH - 4
+    end
+
+    local function SubLabel(text)
+        local lbl = child:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        lbl:SetPoint("TOPLEFT", child, "TOPLEFT", 4, yOff)
+        lbl:SetText(text)
+        lbl:SetTextColor(0.7, 0.7, 0.7)
+        yOff = yOff - LH
+    end
+
+    local function MakeButton(label, w, h)
+        w = w or 140; h = h or 22
+        local btn = CreateFrame("Button", nil, child, "UIPanelButtonTemplate")
+        btn:SetWidth(w); btn:SetHeight(h)
+        btn:SetText(label)
+        return btn
+    end
+
+    local function MakeCheckbox(label, isChecked, onChange)
+        local cb = CreateFrame("CheckButton", nil, child)
+        cb:SetWidth(16); cb:SetHeight(16)
+        cb:SetPoint("TOPLEFT", child, "TOPLEFT", 0, yOff)
+        cb:SetNormalTexture("Interface\\Buttons\\UI-CheckBox-Up")
+        cb:SetPushedTexture("Interface\\Buttons\\UI-CheckBox-Down")
+        cb:SetHighlightTexture("Interface\\Buttons\\UI-CheckBox-Highlight")
+        cb:SetCheckedTexture("Interface\\Buttons\\UI-CheckBox-Check")
+        cb:SetChecked(isChecked)
+        local lbl = child:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        lbl:SetPoint("LEFT", cb, "RIGHT", 4, 0)
+        lbl:SetText(label)
+        cb:SetScript("OnClick", onChange)
+        yOff = yOff - LH
+        return cb
+    end
+
+    -- -----------------------------------------------------------------------
+    -- Section 1: This Character
+    -- -----------------------------------------------------------------------
+    SectionTitle("This Character")
+
+    -- Manager Mode checkbox
+    MakeCheckbox("Manager Mode",
+        ConsumesManager_CharOptions and ConsumesManager_CharOptions.isManager,
+        function()
+            ConsumesManager_CharOptions = ConsumesManager_CharOptions or {}
+        ConsumesManager_CharOptions.isManager = this:GetChecked() == 1
+            ConsumesManager_UpdateNetworkContent()
+        end)
+    SubLabel("Managers can view stock across all characters.")
+    yOff = yOff - 4
+
+    -- Sync button + Stock Overview button
+    local syncBtn = MakeButton("Sync", 80)
+    syncBtn:SetPoint("TOPLEFT", child, "TOPLEFT", 0, yOff)
+    syncBtn:SetScript("OnClick", function()
+        if CM_FileSync_Sync then CM_FileSync_Sync() end
+    end)
+
+    if ConsumesManager_CharOptions and ConsumesManager_CharOptions.isManager then
+        local overviewBtn = MakeButton("Stock Overview", 130)
+        overviewBtn:SetPoint("LEFT", syncBtn, "RIGHT", 8, 0)
+        overviewBtn:SetScript("OnClick", function()
+            if CM_ManagerView_Toggle then CM_ManagerView_Toggle() end
+        end)
+    end
+
+    yOff = yOff - LH - 4
+    SubLabel("Sync exports your inventory to a file.")
+    SubLabel("Managers also import all other characters on sync.")
+    yOff = yOff - 8
+
+    -- -----------------------------------------------------------------------
+    -- Section 2: Tracked Characters (manager only)
+    -- -----------------------------------------------------------------------
+    if ConsumesManager_CharOptions and ConsumesManager_CharOptions.isManager then
+        SectionTitle("Tracked Characters")
+        SubLabel("Uncheck a character to hide them from the stock overview.")
+        yOff = yOff - 4
+
+        -- Build list from manifest + loaded data
+        local knownChars = {}
+
+        -- From loaded file data
+        if CM_FileSync and CM_FileSync.charData then
+            for charName, _ in pairs(CM_FileSync.charData) do
+                knownChars[charName] = true
+            end
+        end
+
+        -- From manifest file
+        if ImportFile then
+            local manifest = ImportFile("CM_manifest")
+            if manifest and manifest ~= "" then
+                for name in string.gfind(manifest, "[^,]+") do
+                    local _, _, trimmed = string.find(name, "^%s*(.-)%s*$")
+                    if trimmed and trimmed ~= "" then
+                        knownChars[trimmed] = true
+                    end
+                end
+            end
+        end
+
+        -- Sort names
+        local sortedChars = {}
+        for name, _ in pairs(knownChars) do
+            table.insert(sortedChars, name)
+        end
+        table.sort(sortedChars)
+
+        if table.getn(sortedChars) == 0 then
+            SubLabel("No character data found. Have each character press Sync.")
+        else
+            ConsumesManager_Options.excludedChars = ConsumesManager_Options.excludedChars or {}
+            for _, charName in ipairs(sortedChars) do
+                local isExcluded = ConsumesManager_Options.excludedChars[charName] == true
+                local captureName = charName
+                MakeCheckbox(charName, not isExcluded, function()
+                    ConsumesManager_Options.excludedChars = ConsumesManager_Options.excludedChars or {}
+                    ConsumesManager_Options.excludedChars[captureName] = this:GetChecked() ~= 1
+                    -- Refresh manager view if open
+                    if CM_ManagerView_Refresh then CM_ManagerView_Refresh() end
+                end)
+            end
+        end
+    end
+
+    child.contentHeight = math.abs(yOff) + 20
+    child:SetHeight(child.contentHeight)
+
+    -- Update scroll bar
+    parentFrame.scrollFrame:SetVerticalScroll(0)
+    if parentFrame.scrollBar then parentFrame.scrollBar:SetValue(0) end
+
+    local totalHeight = child.contentHeight
+    local shownHeight = parentFrame.scrollFrame:GetHeight() or 380
+    local maxScroll   = math.max(0, totalHeight - shownHeight)
+    parentFrame.scrollFrame.maxScroll = maxScroll
+    if parentFrame.scrollBar then
+        if totalHeight > shownHeight then
+            parentFrame.scrollBar:SetMinMaxValues(0, maxScroll)
+            parentFrame.scrollBar:Show()
+        else
+            parentFrame.scrollBar:SetMinMaxValues(0, 0)
+            parentFrame.scrollBar:SetValue(0)
+            parentFrame.scrollBar:Hide()
+        end
+    end
+end
 
 -- Global Functions -----------------------------------------------------------------------------
 function ConsumesManager_UpdateUseButtons()
@@ -3403,6 +3656,10 @@ function ConsumesManager_ScanPlayerInventory()
                 ConsumesManager_Data[realmName][playerName].faction = faction
             end
             
+            -- Auto-register current player into Characters whitelist
+            ConsumesManager_Options["Characters"] = ConsumesManager_Options["Characters"] or {}
+            ConsumesManager_Options["Characters"][playerName] = true
+
             -- Initialize inventory data
             ConsumesManager_Data[realmName][playerName]["inventory"] = {}
 
