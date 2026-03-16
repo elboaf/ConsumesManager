@@ -68,7 +68,7 @@ local function IsAuctionableMat(s)
 end
 
 local function ParseMatString(s)
-    local amount, name = string.match(s, "^(%d+)x?%s+(.+)$")
+    local _, _, amount, name = string.find(s, "^(%d+)x?%s+(.+)$")
     if name then return name, tonumber(amount) end
     return s, 1
 end
@@ -88,28 +88,142 @@ end
 -- ============================================================
 -- REBUILD DISPLAY LIST
 -- ============================================================
-local function RebuildDisplayList()
-    displayList = {}
-    if not consumablesCategories or not ConsumesManager_SelectedItems then return end
 
+-- Build a flat item lookup: itemID -> item, for fast access
+local function BuildItemLookup()
+    local lookup = {}
+    if not consumablesCategories then return lookup end
     for _, items in pairs(consumablesCategories) do
         for _, item in ipairs(items) do
-            if ConsumesManager_SelectedItems[item.id] then
-                local count = GetConsumeCount(item.id)
-                local mats    = GetItemMats(item)
-                local isBop   = item.bop == true
-                -- BOP with single mat: auto-expand, left-click searches the mat
-                -- BOP with multiple mats: left-click expands instead of searching
-                local autoExpand = isBop and table.getn(mats) == 1
+            lookup[item.id] = item
+        end
+    end
+    return lookup
+end
+
+local function RebuildDisplayList()
+    displayList = {}
+    if not consumablesCategories then return end
+
+    local isManager = ConsumesManager_CharOptions and ConsumesManager_CharOptions.isManager
+
+    -- If manager but no data loaded yet, trigger a read now
+    if isManager and CM_FileSync and (not CM_FileSync.charData or next(CM_FileSync.charData) == nil) then
+        if CM_FileSync.ReadAll then CM_FileSync.ReadAll() end
+    end
+
+    local hasFileData = isManager
+        and CM_FileSync
+        and CM_FileSync.charData
+        and next(CM_FileSync.charData) ~= nil
+
+    if hasFileData then
+        -- --------------------------------------------------------
+        -- MANAGER MODE: flat list of all configured consumes across
+        -- all characters. Count = total across all characters.
+        -- Missing items (total=0) float to the top.
+        -- --------------------------------------------------------
+        local itemLookup = BuildItemLookup()
+        local charNames  = CM_FileSync_GetCharNames and CM_FileSync_GetCharNames() or {}
+
+        -- Collect union of all configured items with total counts
+        local totals = {}  -- [itemID] = total count across all chars
+        for _, charName in ipairs(charNames) do
+            local charData = CM_FileSync.charData[charName]
+            if charData then
+                for itemID, entry in pairs(charData.items) do
+                    if entry.configured then
+                        totals[itemID] = (totals[itemID] or 0) + entry.count
+                    end
+                end
+            end
+        end
+
+        -- Also include inventory from ALL characters (not just configured ones)
+        -- so the total count reflects full stock even from non-configuring chars
+        for _, charName in ipairs(charNames) do
+            local charData = CM_FileSync.charData[charName]
+            if charData then
+                for itemID, entry in pairs(charData.items) do
+                    if totals[itemID] ~= nil and not entry.configured then
+                        -- This char has stock of something another char uses
+                        totals[itemID] = totals[itemID] + entry.count
+                    end
+                end
+            end
+        end
+
+        -- Build sorted list: by count asc, then non-bop before bop, then by name
+        local rows = {}
+        for itemID, total in pairs(totals) do
+            local item = itemLookup[itemID]
+            if item then
+                table.insert(rows, { item = item, count = total, isBop = item.bop == true })
+            end
+        end
+        table.sort(rows, function(a, b)
+            -- BOP items always below non-BOP
+            local aBop = a.isBop and 1 or 0
+            local bBop = b.isBop and 1 or 0
+            if aBop ~= bBop then return aBop < bBop end
+            -- Within same group: count ascending
+            if a.count ~= b.count then return a.count < b.count end
+            return a.item.name < b.item.name
+        end)
+
+        for _, entry in ipairs(rows) do
+            local item  = entry.item
+            local mats  = GetItemMats(item)
+            local isBop = item.bop == true
+
+            if isBop then
+                -- BOP items: per-character breakdown so we know
+                -- how many reagents each toon needs individually
+                for _, charName in ipairs(charNames) do
+                    local charData = CM_FileSync.charData[charName]
+                    if charData then
+                        local charEntry = charData.items[item.id]
+                        if charEntry and charEntry.configured then
+                            local count   = charEntry.count
+                            local autoExp = table.getn(mats) == 1
+                            local key     = "mgr_bop_" .. charName .. item.id
+                            table.insert(displayList, {
+                                type      = "consume",
+                                item      = item,
+                                count     = count,
+                                expanded  = consumeState[key] or autoExp,
+                                bop       = true,
+                                singleMat = table.getn(mats) == 1 and mats[1] or nil,
+                                stateKey  = key,
+                                charLabel = charName,
+                            })
+                            if consumeState[key] then
+                                for _, mat in ipairs(mats) do
+                                    table.insert(displayList, {
+                                        type   = "mat",
+                                        name   = mat.name,
+                                        amount = mat.amount,
+                                    })
+                                end
+                            end
+                        end
+                    end
+                end
+            else
+                -- Normal item: show total count
+                local count   = entry.count
+                local autoExp = false
+                local key     = "mgr" .. item.id
                 table.insert(displayList, {
-                    type       = "consume",
-                    item       = item,
-                    count      = count,
-                    expanded   = consumeState[item.id] or autoExpand,
-                    bop        = isBop,
-                    singleMat  = isBop and table.getn(mats) == 1 and mats[1] or nil,
+                    type      = "consume",
+                    item      = item,
+                    count     = count,
+                    expanded  = consumeState[key] or autoExp,
+                    bop       = false,
+                    singleMat = nil,
+                    stateKey  = key,
                 })
-                if consumeState[item.id] then
+                if consumeState[key] then
                     for _, mat in ipairs(mats) do
                         table.insert(displayList, {
                             type   = "mat",
@@ -117,6 +231,55 @@ local function RebuildDisplayList()
                             amount = mat.amount,
                         })
                     end
+                end
+            end
+        end
+
+    else
+        -- --------------------------------------------------------
+        -- NORMAL MODE: show own selected consumes as before
+        -- --------------------------------------------------------
+        if not ConsumesManager_SelectedItems then return end
+
+        -- Collect into rows first so we can sort
+        local rows = {}
+        for _, items in pairs(consumablesCategories) do
+            for _, item in ipairs(items) do
+                if ConsumesManager_SelectedItems[item.id] then
+                    local count = GetConsumeCount(item.id)
+                    table.insert(rows, { item = item, count = count })
+                end
+            end
+        end
+
+        -- Sort by count ascending, then by name
+        table.sort(rows, function(a, b)
+            if a.count ~= b.count then return a.count < b.count end
+            return a.item.name < b.item.name
+        end)
+
+        for _, entry in ipairs(rows) do
+            local item    = entry.item
+            local count   = entry.count
+            local mats    = GetItemMats(item)
+            local isBop   = item.bop == true
+            local autoExp = isBop and table.getn(mats) == 1
+            table.insert(displayList, {
+                type      = "consume",
+                item      = item,
+                count     = count,
+                expanded  = consumeState[item.id] or autoExp,
+                bop       = isBop,
+                singleMat = isBop and table.getn(mats) == 1 and mats[1] or nil,
+                stateKey  = tostring(item.id),
+            })
+            if consumeState[item.id] then
+                for _, mat in ipairs(mats) do
+                    table.insert(displayList, {
+                        type   = "mat",
+                        name   = mat.name,
+                        amount = mat.amount,
+                    })
                 end
             end
         end
@@ -209,7 +372,7 @@ local function SearchAuction(name, itemID)
         if ok and ok2 then
             local tab = aux.get_tab and aux.get_tab()
             if link and tab and tab.CLICK_LINK then
-                local id = tonumber(string.match(link, "item:(%d+)"))
+                local _, _, _id = string.find(link, "item:(%d+)") local id = tonumber(_id)
                 if id then
                     local item_info = info.item(id)
                     if item_info then
@@ -435,19 +598,17 @@ local function CreatePanel()
         row:SetScript("OnClick", function()
             if not row.entry then return end
             if arg1 == "RightButton" and row.entry.type == "consume" then
-                local id = row.entry.item.id
-                consumeState[id] = not consumeState[id]
+                local key = row.entry.stateKey or tostring(row.entry.item.id)
+                consumeState[key] = not consumeState[key]
                 RebuildDisplayList()
                 CM_AuctionShoppingList_Update()
             elseif arg1 == "LeftButton" then
                 if row.entry.type == "consume" then
                     if row.entry.singleMat then
-                        -- BOP single mat: search the mat directly
                         SearchAuction(row.entry.singleMat.name)
                     elseif row.entry.bop then
-                        -- BOP multiple mats: left-click expands/collapses
-                        local id = row.entry.item.id
-                        consumeState[id] = not consumeState[id]
+                        local key = row.entry.stateKey or tostring(row.entry.item.id)
+                        consumeState[key] = not consumeState[key]
                         RebuildDisplayList()
                         CM_AuctionShoppingList_Update()
                     else
@@ -512,7 +673,15 @@ function CM_AuctionShoppingList_Update()
         if entry then
             row.entry = entry
 
-            if entry.type == "consume" then
+            if entry.type == "section" then
+                -- Character section header
+                row.icon:Hide()
+                row.arrow:SetText("")
+                row.label:SetPoint("LEFT", row, "LEFT", 0, 0)
+                row.label:SetText("|cffffff00" .. entry.charName .. "|r")
+                row:Show()
+
+            elseif entry.type == "consume" then
                 local item    = entry.item
                 local texture = ConsumesManagerBar_GetItemTexture(item.id)
                 row.icon:SetTexture(texture)
@@ -530,7 +699,10 @@ function CM_AuctionShoppingList_Update()
                 local countStr  = entry.count == 0
                     and "|cffff4444[0]|r"
                     or  "|cff44ff44[" .. entry.count .. "]|r"
-                row.label:SetText("|cff" .. nameColor .. item.name .. "|r " .. countStr)
+                local charSuffix = entry.charLabel
+                    and " |cff888888(" .. entry.charLabel .. ")|r"
+                    or ""
+                row.label:SetText("|cff" .. nameColor .. item.name .. "|r " .. countStr .. charSuffix)
 
             elseif entry.type == "mat" then
                 row.icon:Hide()
