@@ -127,7 +127,9 @@ Concoctions use other tracked elixirs as reagents (e.g. Elixir of the Mongoose, 
 - `MatIDs.lua` — reagent name → item ID lookup table
 
 
-### original readme below:
+
+
+# Original readme below:
 
 # Consumes Manager
 Easily track and manage your consumables, food buffs, and more across your inventory, bank, and mail, while supporting multiple characters and accounts.
