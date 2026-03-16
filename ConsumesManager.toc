@@ -2,9 +2,9 @@
 ## Title: Consumes Manager
 ## Notes: Easily track and manage your consumables, food buffs, and more across your inventory, bank, and mail, while supporting multiple characters and accounts.
 ## Author: Rels
-## Version: 2.3.0
-## SavedVariables: ConsumesManager_Options, ConsumesManager_SelectedItems, ConsumesManager_Data
-## SavedVariablesPerCharacter: ConsumesManagerBar_Settings2
+## Version: 2.3.1
+## SavedVariables: ConsumesManager_Data
+## SavedVariablesPerCharacter: ConsumesManagerBar_Settings2, ConsumesManager_CharOptions, ConsumesManager_Options, ConsumesManager_SelectedItems
 
 libs\LibStub\LibStub.lua
 libs\LibCompress\LibCompress.lua
@@ -17,5 +17,7 @@ MatIDs.lua
 Classpresets.lua
 DoiteGlow.lua
 ConsumesManagerBar.lua
+CM_FileSync.lua
+CM_ManagerView.lua
 AuctionShoppingList.lua
 minimap_icon.xml
