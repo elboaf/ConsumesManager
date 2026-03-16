@@ -16,28 +16,28 @@ CM_MatIDs = {
     ["Blindweed"]               = 8839,
     ["Bruiseweed"]              = 2453,
     ["Dreamfoil"]               = 13463,
-    ["Fadeleaf"]                = 3819,
+    ["Fadeleaf"]                = 3818,
     ["Firebloom"]               = 4625,
     ["Ghost Mushroom"]          = 8845,
     ["Golden Sansam"]           = 13464,
     ["Goldthorn"]               = 3821,
     ["Gromsblood"]              = 8846,
-    ["Heart of the Wild"]       = 13465,
-    ["Icecap"]                  = 12655,
+    ["Heart of the Wild"]       = 10286,
+    ["Icecap"]                  = 13467,
     ["Khadgar's Whisker"]       = 3358,
-    ["Mountain Silversage"]     = 13466,
-    ["Plaguebloom"]             = 13467,
+    ["Mountain Silversage"]     = 13465,
+    ["Plaguebloom"]             = 13466,
     ["Purple Lotus"]            = 8831,
     ["Stranglekelp"]            = 3820,
     ["Sungrass"]                = 8838,
     ["Swiftthistle"]            = 2452,
     ["Wild Steelbloom"]         = 3355,
     ["Wildvine"]                = 8153,
-    ["Wintersbite"]             = 13010,
+    ["Wintersbite"]             = 3819,
 
     -- Herbs (Turtle WoW custom)
     ["Deathweed"]               = 5173,    -- [TW]
-    ["Mage Royal"]              = 785,     -- [TW] (Mageroyal, renamed)
+    ["Mageroyal"]              = 785,     -- [TW] (Mageroyal, renamed)
     ["Savage Frond"]            = 22529,   -- [TW]
     ["Sweet Mountain Berry"]    = 51714,   -- [TW]
 
@@ -48,11 +48,11 @@ CM_MatIDs = {
 
     -- Alchemy intermediates / oils
     ["Blackmouth Oil"]          = 6370,
-    ["Fire Oil"]                = 7067,
+    ["Fire Oil"]                = 6371,
     ["Shadow Oil"]              = 3824,
     ["Stonescale Oil"]          = 13423,
-    ["Goblin Rocket Fuel"]      = 10922,
-    ["Swiftness Potion"]        = 6632,
+    ["Goblin Rocket Fuel"]      = 9061,
+    ["Swiftness Potion"]        = 2459,
 
     -- Enchanting mats
     ["Dream Dust"]              = 11176,
@@ -68,19 +68,19 @@ CM_MatIDs = {
 
     -- Vials
     ["Crystal Vial"]            = 8925,
-    ["Empty Vial"]              = 1971,
-    ["Leaded Vial"]             = 2457,
+    ["Empty Vial"]              = 3371,
+    ["Leaded Vial"]             = 3372,
     ["Imbued Vial"]             = 18256,   -- [TW]
 
     -- Elemental mats
-    ["Elemental Air"]           = 7080,
-    ["Elemental Earth"]         = 7076,
-    ["Elemental Fire"]          = 7078,
-    ["Elemental Water"]         = 7077,
+    ["Elemental Air"]           = 7069,
+    ["Elemental Earth"]         = 7067,
+    ["Elemental Fire"]          = 7068,
+    ["Elemental Water"]         = 7070,
 
     -- Engineering / metal / cloth
     ["Dense Blasting Powder"]   = 15992,
-    ["Dense Stone"]             = 12836,
+    ["Dense Stone"]             = 12365,
     ["Heavy Blasting Powder"]   = 4377,
     ["Iron Bar"]                = 3575,
     ["Mageweave Cloth"]         = 4338,
@@ -90,34 +90,33 @@ CM_MatIDs = {
     ["Thorium Bar"]             = 12359,
     ["Thorium Ore"]             = 10620,
     ["Thorium Widget"]          = 15994,
-    ["Unstable Trigger"]        = 18588,
+    ["Unstable Trigger"]        = 10560,
 
     -- Cooking mats (vanilla)
-    ["Basilisk Brain"]          = 8398,
+    ["Basilisk Brain"]          = 8394,
     ["Blasted Boar Lung"]       = 8392,
-    ["Chimaerok Tenderloin"]    = 21151,
-    ["Darkclaw Lobster"]        = 13893,
+    ["Chimaerok Tenderloin"]    = 21024,
+    ["Darkclaw Lobster"]        = 13888,
     ["Deeprock Salt"]           = 8150,
     ["Giant Egg"]               = 12207,
     ["Hot Spices"]              = 2692,
-    ["Large Venom Sac"]         = 7974,
-    ["Murloc Eye"]              = 12422,
-    ["Mystery Meat"]            = 12426,
-    ["Raw Greater Sagefish"]    = 13756,
-    ["Raw Nightfin Snapper"]    = 13754,
-    ["Raw Whitescale Salmon"]   = 13758,
+    ["Large Venom Sac"]         = 1288,
+    ["Murloc Eye"]              = 730,
+    ["Mystery Meat"]            = 12037,
+    ["Raw Greater Sagefish"]    = 21153,
+    ["Raw Nightfin Snapper"]    = 13759,
+    ["Raw Whitescale Salmon"]   = 13889,
     ["Red Wolf Meat"]           = 12203,
     ["Refreshing Spring Water"] = 159,
-    ["Refreshing Springwater"]  = 159,     -- alternate spelling used in itemlist
-    ["Runn Tum Tuber"]          = 13724,
+    ["Runn Tum Tuber"]          = 18255,
     ["Scorpok Pincer"]          = 8393,
-    ["Snickerfang Jowl"]        = 8394,
-    ["Soothing Spices"]         = 2680,
-    ["Tender Crocolisk Meat"]   = 12428,
-    ["Tender Wolf Meat"]        = 12429,
-    ["Tiger Meat"]              = 12427,
+    ["Snickerfang Jowl"]        = 8391,
+    ["Soothing Spices"]         = 3713,
+    ["Tender Crocolisk Meat"]   = 3667,
+    ["Tender Wolf Meat"]        = 12208,
+    ["Tiger Meat"]              = 12202,
     ["Vulture Gizzard"]         = 8396,
-    ["White Spider Meat"]       = 12425,
+    ["White Spider Meat"]       = 12205,
 
     -- E'ko items (Winterspring, sold on AH, 3x per Juju turn-in)
     ["Winterfall E'ko"]         = 12431,
