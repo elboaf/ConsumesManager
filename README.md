@@ -151,9 +151,6 @@ In edit mode:
 - Manager mode and exclude flags moved to a dedicated per-character saved variable (`ConsumesManager_CharOptions`)
 - Stock overview column headers now distinguish managers (gold, left columns) from non-managers (grey, right columns)
 - Stock overview and shopping list sorted by non-BOP items first, then BOP; within each group by quantity ascending
-- Network tab is now scrollable
-- Fixed `string.gmatch` and `string.match` calls replaced with Lua 5.0 compatible `string.gfind` and `string.find`
-- Fixed modulo operator (`%`) replaced with `math.mod` for Lua 5.0 compatibility
 - Minimap button tooltip updated to show right-click hint when manager mode is enabled
 
 ### 2.3.0
