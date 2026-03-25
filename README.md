@@ -146,12 +146,24 @@ In edit mode:
 
 ## Changelog
 
-### 2.3.1
+### 2.3.2
 - All settings and selected items are now **per-character** — configuring consumables on one character no longer affects others
 - Manager mode and exclude flags moved to a dedicated per-character saved variable (`ConsumesManager_CharOptions`)
 - Stock overview column headers now distinguish managers (gold, left columns) from non-managers (grey, right columns)
 - Stock overview and shopping list sorted by non-BOP items first, then BOP; within each group by quantity ascending
-- Minimap button tooltip updated to show right-click hint when manager mode is enabled
+- Stock overview clickable column headers — click any character or Total column to sort by that column
+- Stock overview character tabs now show manager columns alongside the character's own count for deficit tracking
+- Stock overview minimize button collapses the window to a slim draggable title bar
+- Stock overview Total column moved to leftmost position
+- Manager AH shopping list BOP items show per-character inline rows (e.g. `Juju Power [0] (Rels)`) instead of section headers
+- Shopping list right-click mat expansion fixed for non-manager characters
+- Shopping list now shows all mats including non-auctionable ones; non-auctionable mats are display-only (clicking does nothing)
+- Network tab is now scrollable
+- Minimap right-click now toggles bar edit mode for all characters
+- Edit mode exit now correctly hides orientation, drag, and swap handles for hidden bars
+- Added Dragonbreath Chili to itemlist (id 12217, spellId 15852)
+- Fixed `string.gmatch` and `string.match` calls replaced with Lua 5.0 compatible `string.gfind` and `string.find`
+- Fixed modulo operator (`%`) replaced with `math.mod` for Lua 5.0 compatibility
 
 ### 2.3.0
 - Added AH Shopping List panel (aux integration)
