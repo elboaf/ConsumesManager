@@ -19,6 +19,7 @@
 ---------------------------------------------------------------
 
 CM_ManagerView = {}
+CM_ManagerView._tabManagers = {}
 
 -- ============================================================
 -- LAYOUT CONSTANTS
@@ -40,6 +41,9 @@ local scrollPos   = 0
 local activeTab   = "overview"   -- "overview" or charName
 local displayList = {}           -- flat list of { item, count, charCounts }
 local charNames   = {}           -- sorted list of loaded char names
+local sortKey     = "total"      -- "total" or a charName
+local sortDir     = "asc"        -- always asc for now
+local minimized   = false
 
 -- ============================================================
 -- COLOR HELPER
@@ -114,27 +118,63 @@ local function BuildDisplayList()
             end
         end
 
-        -- Sort: non-BOP before BOP, within each group by total ascending, then name
+        -- Sort: non-BOP before BOP, within each group by sortKey ascending, then name
         table.sort(rows, function(a, b)
             local aBop = (a.item.bop == true) and 1 or 0
             local bBop = (b.item.bop == true) and 1 or 0
             if aBop ~= bBop then return aBop < bBop end
-            if a.total ~= b.total then return a.total < b.total end
+            local aVal, bVal
+            if sortKey == "total" then
+                aVal = a.total
+                bVal = b.total
+            else
+                -- Sort by a specific character's count; nil (not configured) sorts last
+                aVal = a.charCounts[sortKey]
+                bVal = b.charCounts[sortKey]
+                if aVal == nil and bVal == nil then return a.item.name < b.item.name end
+                if aVal == nil then return false end
+                if bVal == nil then return true end
+            end
+            if aVal ~= bVal then return aVal < bVal end
             return a.item.name < b.item.name
         end)
 
         displayList = rows
 
     else
-        -- Character tab: items this character has configured
+        -- Character tab: items this character has configured,
+        -- plus counts from each manager character for comparison
         local data = CM_FileSync.charData[activeTab]
         if not data then return end
+
+        -- Collect manager names
+        local excluded = ConsumesManager_Options and ConsumesManager_Options.excludedChars or {}
+        local mgrs = {}
+        for _, cn in ipairs(charNames) do
+            local d = CM_FileSync.charData[cn]
+            if d and d.isManager and not excluded[cn] and cn ~= activeTab then
+                table.insert(mgrs, cn)
+            end
+        end
+        -- Store on module scope so UpdateRows and RebuildColumnHeaders can read it
+        CM_ManagerView._tabManagers = mgrs
 
         local rows = {}
         for itemID, entry in pairs(data.items) do
             local item = lookup[itemID]
-            if item then
-                table.insert(rows, { item = item, count = entry.count, configured = entry.configured })
+            if item and entry.configured then
+                -- Gather manager counts for this item
+                local mgrCounts = {}
+                for _, mn in ipairs(mgrs) do
+                    local md = CM_FileSync.charData[mn]
+                    local me = md and md.items[itemID]
+                    mgrCounts[mn] = me and me.count or 0
+                end
+                table.insert(rows, {
+                    item      = item,
+                    count     = entry.count,
+                    mgrCounts = mgrCounts,
+                })
             end
         end
 
@@ -183,19 +223,32 @@ function CM_ManagerView_UpdateRows()
                 -- Name
                 row.label:SetText("|cffdddddd" .. entry.item.name .. "|r")
 
-                -- Per-char cells
+                -- Total cell first
                 row.cells = row.cells or {}
+                local totCell = row.cells[1]
+                if not totCell then
+                    totCell = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+                    totCell:SetWidth(COL_WIDTH)
+                    totCell:SetJustifyH("CENTER")
+                    row.cells[1] = totCell
+                end
+                totCell:ClearAllPoints()
+                totCell:SetPoint("LEFT", row, "LEFT", LABEL_WIDTH, 0)
+                totCell:SetText("|cff" .. CountColor(entry.total) .. entry.total .. "|r")
+                totCell:Show()
+
+                -- Per-char cells after Total
                 for j, cn in ipairs(charNames) do
                     local count = entry.charCounts[cn]
-                    local cell  = row.cells[j]
+                    local cell  = row.cells[j + 1]
                     if not cell then
                         cell = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
                         cell:SetWidth(COL_WIDTH)
                         cell:SetJustifyH("CENTER")
-                        row.cells[j] = cell
+                        row.cells[j + 1] = cell
                     end
                     cell:ClearAllPoints()
-                    cell:SetPoint("LEFT", row, "LEFT", LABEL_WIDTH + (j - 1) * COL_WIDTH, 0)
+                    cell:SetPoint("LEFT", row, "LEFT", LABEL_WIDTH + j * COL_WIDTH, 0)
                     if count == nil then
                         cell:SetText("|cff444444-|r")
                     else
@@ -204,24 +257,12 @@ function CM_ManagerView_UpdateRows()
                     cell:Show()
                 end
 
-                -- Total cell
-                local totCell = row.cells[colCount + 1]
-                if not totCell then
-                    totCell = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-                    totCell:SetWidth(COL_WIDTH)
-                    totCell:SetJustifyH("CENTER")
-                    row.cells[colCount + 1] = totCell
-                end
-                totCell:ClearAllPoints()
-                totCell:SetPoint("LEFT", row, "LEFT", LABEL_WIDTH + colCount * COL_WIDTH, 0)
-                totCell:SetText("|cff" .. CountColor(entry.total) .. entry.total .. "|r")
-                totCell:Show()
-
             else
-                -- Character tab: just name + count
-                local color = CountColor(entry.count)
+                -- Character tab: char count + manager columns
                 row.label:SetText("|cffdddddd" .. entry.item.name .. "|r")
+                row.cells = row.cells or {}
 
+                -- Character's own count
                 local cell = row.cells[1]
                 if not cell then
                     cell = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
@@ -231,8 +272,25 @@ function CM_ManagerView_UpdateRows()
                 end
                 cell:ClearAllPoints()
                 cell:SetPoint("LEFT", row, "LEFT", LABEL_WIDTH, 0)
-                cell:SetText("|cff" .. color .. entry.count .. "|r")
+                cell:SetText("|cff" .. CountColor(entry.count) .. entry.count .. "|r")
                 cell:Show()
+
+                -- Manager columns
+                local mgrs = CM_ManagerView._tabManagers or {}
+                for j, mn in ipairs(mgrs) do
+                    local count = entry.mgrCounts and entry.mgrCounts[mn] or 0
+                    local mcell = row.cells[j + 1]
+                    if not mcell then
+                        mcell = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+                        mcell:SetWidth(COL_WIDTH)
+                        mcell:SetJustifyH("CENTER")
+                        row.cells[j + 1] = mcell
+                    end
+                    mcell:ClearAllPoints()
+                    mcell:SetPoint("LEFT", row, "LEFT", LABEL_WIDTH + j * COL_WIDTH, 0)
+                    mcell:SetText("|cff" .. CountColor(count) .. count .. "|r")
+                    mcell:Show()
+                end
             end
 
             -- Tooltip
@@ -314,6 +372,7 @@ function RebuildTabs()
         btn:SetScript("OnClick", function()
             activeTab = captureKey
             scrollPos = 0
+            sortKey   = "total"
             BuildDisplayList()
             RebuildTabs()
             RebuildColumnHeaders()
@@ -340,35 +399,70 @@ function RebuildColumnHeaders()
 
     if activeTab == "overview" then
         -- Per-character column headers
+        local function MakeColHeader(label, xOff, key, baseColor)
+            local btn = CreateFrame("Button", nil, frame)
+            btn:SetWidth(COL_WIDTH)
+            btn:SetHeight(COL_H_HEIGHT)
+            btn:SetPoint("TOPLEFT", frame, "TOPLEFT", xOff, -(HEADER_HEIGHT))
+            local lbl = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            lbl:SetAllPoints(btn)
+            lbl:SetJustifyH("CENTER")
+            btn.lbl = lbl
+            local function Refresh()
+                local isActive = (sortKey == key)
+                local arrow = isActive and " |cffffffff^|r" or ""
+                lbl:SetText("|c" .. baseColor .. label .. "|r" .. arrow)
+            end
+            btn.Refresh = Refresh
+            Refresh()
+            local captureKey = key
+            btn:SetScript("OnClick", function()
+                sortKey = captureKey
+                scrollPos = 0
+                BuildDisplayList()
+                RebuildColumnHeaders()
+                CM_ManagerView_UpdateRows()
+            end)
+            btn:SetScript("OnEnter", function()
+                lbl:SetTextColor(1, 1, 1, 1)
+            end)
+            btn:SetScript("OnLeave", function()
+                lbl:SetTextColor(1, 1, 1, 1)  -- reset handled by Refresh on next rebuild
+                btn.Refresh()
+            end)
+            table.insert(frame.colHeaders, btn)
+        end
+
+        -- Total header first (always grey)
+        MakeColHeader("Total", LABEL_WIDTH + 8, "total", "ffaaaaaa")
+
+        -- Per-character headers after Total
         for j, cn in ipairs(charNames) do
-            local h = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-            h:SetWidth(COL_WIDTH)
-            h:SetJustifyH("CENTER")
-            h:SetPoint("TOPLEFT", frame, "TOPLEFT",
-                LABEL_WIDTH + 8 + (j - 1) * COL_WIDTH, -(HEADER_HEIGHT))
-            -- Managers in gold, non-managers in grey
             local data = CM_FileSync and CM_FileSync.charData and CM_FileSync.charData[cn]
             local color = (data and data.isManager) and "ffffff00" or "ffaaaaaa"
-            h:SetText("|c" .. color .. cn .. "|r")
-            table.insert(frame.colHeaders, h)
+            MakeColHeader(cn, LABEL_WIDTH + 8 + j * COL_WIDTH, cn, color)
         end
-        -- Total header
-        local tot = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        tot:SetWidth(COL_WIDTH)
-        tot:SetJustifyH("CENTER")
-        tot:SetPoint("TOPLEFT", frame, "TOPLEFT",
-            LABEL_WIDTH + 8 + colCount * COL_WIDTH, -(HEADER_HEIGHT))
-        tot:SetText("|cffaaaaaaTotal|r")
-        table.insert(frame.colHeaders, tot)
     else
-        -- Single count column header
+        -- Character's own count column
         local h = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
         h:SetWidth(COL_WIDTH)
         h:SetJustifyH("CENTER")
         h:SetPoint("TOPLEFT", frame, "TOPLEFT",
             LABEL_WIDTH + 8, -(HEADER_HEIGHT))
-        h:SetText("|cffaaaaaaCount|r")
+        h:SetText("|cffffff00" .. activeTab .. "|r")
         table.insert(frame.colHeaders, h)
+
+        -- Manager columns
+        local mgrs = CM_ManagerView._tabManagers or {}
+        for j, mn in ipairs(mgrs) do
+            local mh = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            mh:SetWidth(COL_WIDTH)
+            mh:SetJustifyH("CENTER")
+            mh:SetPoint("TOPLEFT", frame, "TOPLEFT",
+                LABEL_WIDTH + 8 + j * COL_WIDTH, -(HEADER_HEIGHT))
+            mh:SetText("|cffffff00" .. mn .. "|r")
+            table.insert(frame.colHeaders, mh)
+        end
     end
 end
 
@@ -429,6 +523,19 @@ local function CreateManagerFrame()
         CM_FileSync.ReadAll()
         CM_ManagerView_Refresh()
     end)
+    frame.refreshBtn = refreshBtn
+
+    -- Minimize button
+    local minBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+    minBtn:SetWidth(24)
+    minBtn:SetHeight(18)
+    minBtn:SetPoint("RIGHT", refreshBtn, "LEFT", -2, 0)
+    minBtn:SetText("_")
+    minBtn:SetScript("OnClick", function()
+        minimized = not minimized
+        CM_ManagerView_ApplyMinimized()
+    end)
+    frame.minBtn = minBtn
 
     -- Separator under tab strip
     local sep = frame:CreateTexture(nil, "ARTWORK")
@@ -561,6 +668,47 @@ local function CreateManagerFrame()
 end
 
 -- ============================================================
+-- MINIMIZE
+-- ============================================================
+function CM_ManagerView_ApplyMinimized()
+    if not frame then return end
+
+    local TITLE_H = 22  -- height of just the title strip when minimized
+
+    if minimized then
+        -- Collapse to a slim title bar
+        frame:SetHeight(TITLE_H)
+        if frame.refreshBtn  then frame.refreshBtn:Hide()  end
+        if frame.scrollBar   then frame.scrollBar:Hide()   end
+        if frame.btnUp       then frame.btnUp:Hide()       end
+        if frame.btnDown     then frame.btnDown:Hide()     end
+        if frame.tabs        then
+            for _, t in ipairs(frame.tabs) do t:Hide() end
+        end
+        if frame.colHeaders  then
+            for _, h in ipairs(frame.colHeaders) do h:Hide() end
+        end
+        for _, row in ipairs(rowFrames) do row:Hide() end
+        if frame.minBtn then frame.minBtn:SetText("+") end
+    else
+        -- Restore full height
+        local colCount
+        if activeTab == "overview" then
+            colCount = table.getn(charNames) + 1
+        else
+            colCount = table.getn(CM_ManagerView._tabManagers) + 1
+        end
+        local winHeight = HEADER_HEIGHT + COL_H_HEIGHT + ROWS_VISIBLE * ROW_HEIGHT + 30
+        frame:SetHeight(winHeight)
+        if frame.refreshBtn then frame.refreshBtn:Show() end
+        if frame.minBtn then frame.minBtn:SetText("_") end
+        RebuildTabs()
+        RebuildColumnHeaders()
+        CM_ManagerView_UpdateRows()
+    end
+end
+
+-- ============================================================
 -- PUBLIC API
 -- ============================================================
 
@@ -575,10 +723,10 @@ function CM_ManagerView_Open()
     BuildDisplayList()
     CreateManagerFrame()
 
-    -- Resize for current character count
-    local colCount = table.getn(charNames)
+    -- Resize for overview tab (always opens on overview)
+    local colCount = table.getn(charNames) + 1  -- chars + Total
     local newWidth = math.max(MIN_WIDTH,
-        LABEL_WIDTH + (colCount + 1) * COL_WIDTH + 40)
+        LABEL_WIDTH + colCount * COL_WIDTH + 40)
     frame:SetWidth(newWidth)
 
     RebuildTabs()
@@ -593,10 +741,15 @@ function CM_ManagerView_Refresh()
     scrollPos = 0
     BuildDisplayList()
 
-    -- Resize if character count changed
-    local colCount = table.getn(charNames)
+    -- Resize based on active tab column count
+    local colCount
+    if activeTab == "overview" then
+        colCount = table.getn(charNames) + 1  -- chars + Total
+    else
+        colCount = table.getn(CM_ManagerView._tabManagers) + 1  -- managers + own count
+    end
     local newWidth = math.max(MIN_WIDTH,
-        LABEL_WIDTH + (colCount + 1) * COL_WIDTH + 40)
+        LABEL_WIDTH + colCount * COL_WIDTH + 40)
     frame:SetWidth(newWidth)
 
     RebuildTabs()
@@ -609,6 +762,7 @@ end
 function CM_ManagerView_Toggle()
     if frame and frame:IsShown() then
         frame:Hide()
+        minimized = false  -- reset so next open is full size
     else
         CM_ManagerView_Open()
     end

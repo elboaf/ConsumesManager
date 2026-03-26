@@ -11,9 +11,7 @@
             GameTooltip:SetOwner(self, "ANCHOR_LEFT")
             GameTooltip:SetText("Consumes Manager", 1, 1, 1)
             GameTooltip:AddLine("Left-click: open tracker", 0.8, 0.8, 0.8)
-            if ConsumesManager_CharOptions and ConsumesManager_CharOptions.isManager then
-                GameTooltip:AddLine("Right-click: stock overview", 0.8, 0.8, 0.8)
-            end
+            GameTooltip:AddLine("Right-click: toggle edit mode", 0.8, 0.8, 0.8)
             GameTooltip:AddLine("Shift + drag: move", 0.5, 0.5, 0.5)
             GameTooltip:Show()
         end)
@@ -24,10 +22,8 @@
 
     function ConsumesManager_HandleClick(self, button)
         if button == "RightButton" then
-            -- Right-click: toggle manager stock overview (if manager mode enabled)
-            if ConsumesManager_CharOptions and ConsumesManager_CharOptions.isManager then
-                if CM_ManagerView_Toggle then CM_ManagerView_Toggle() end
-            end
+            -- Right-click: toggle bar edit mode
+            if ConsumesManagerBar_ToggleEditMode then ConsumesManagerBar_ToggleEditMode() end
         elseif button == "LeftButton" and not IsShiftKeyDown() then
             -- Left-click: toggle the main window
             if ConsumesManager_MainFrame and ConsumesManager_MainFrame:IsShown() then

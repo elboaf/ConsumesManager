@@ -200,9 +200,10 @@ local function RebuildDisplayList()
                             if consumeState[key] then
                                 for _, mat in ipairs(mats) do
                                     table.insert(displayList, {
-                                        type   = "mat",
-                                        name   = mat.name,
-                                        amount = mat.amount,
+                                        type        = "mat",
+                                        name        = mat.name,
+                                        amount      = mat.amount,
+                                        auctionable = mat.auctionable,
                                     })
                                 end
                             end
@@ -226,9 +227,10 @@ local function RebuildDisplayList()
                 if consumeState[key] then
                     for _, mat in ipairs(mats) do
                         table.insert(displayList, {
-                            type   = "mat",
-                            name   = mat.name,
-                            amount = mat.amount,
+                            type        = "mat",
+                            name        = mat.name,
+                            amount      = mat.amount,
+                            auctionable = mat.auctionable,
                         })
                     end
                 end
@@ -268,17 +270,18 @@ local function RebuildDisplayList()
                 type      = "consume",
                 item      = item,
                 count     = count,
-                expanded  = consumeState[item.id] or autoExp,
+                expanded  = consumeState[tostring(item.id)] or autoExp,
                 bop       = isBop,
                 singleMat = isBop and table.getn(mats) == 1 and mats[1] or nil,
                 stateKey  = tostring(item.id),
             })
-            if consumeState[item.id] then
+            if consumeState[tostring(item.id)] then
                 for _, mat in ipairs(mats) do
                     table.insert(displayList, {
-                        type   = "mat",
-                        name   = mat.name,
-                        amount = mat.amount,
+                        type        = "mat",
+                        name        = mat.name,
+                        amount      = mat.amount,
+                        auctionable = mat.auctionable,
                     })
                 end
             end
@@ -637,7 +640,7 @@ local function CreatePanel()
                     GameTooltip:AddLine("|cffaaaaaaRight-click: show mats|r")
                 end
             elseif row.entry.type == "mat" then
-                local id = ResolveMatID(row.entry.name)
+                local id = row.entry.auctionable ~= false and ResolveMatID(row.entry.name) or nil
                 if id and id ~= "search" and type(id) == "number" then
                     GameTooltip:SetHyperlink("item:" .. id)
                 else
