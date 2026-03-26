@@ -44,6 +44,7 @@ local charNames   = {}           -- sorted list of loaded char names
 local sortKey     = "total"      -- "total" or a charName
 local sortDir     = "asc"        -- always asc for now
 local minimized   = false
+local expandState = {}           -- [stateKey] = true/false (expanded)
 
 -- ============================================================
 -- COLOR HELPER
@@ -111,6 +112,7 @@ local function BuildDisplayList()
                                 item       = item,
                                 charCounts = charCounts,
                                 total      = total,
+                                stateKey   = tostring(itemID),
                             })
                         end
                     end
@@ -139,7 +141,23 @@ local function BuildDisplayList()
             return a.item.name < b.item.name
         end)
 
-        displayList = rows
+        -- Expand mat rows for expanded items
+        local expanded = {}
+        for _, row in ipairs(rows) do
+            table.insert(expanded, row)
+            if expandState[row.stateKey] and row.item.mats then
+                for _, matStr in ipairs(row.item.mats) do
+                    local _, _, amount, name = string.find(matStr, "^(%d+)x?%s+(.+)$")
+                    if not name then name = matStr; amount = 1 end
+                    table.insert(expanded, {
+                        type   = "mat",
+                        name   = name,
+                        amount = tonumber(amount) or 1,
+                    })
+                end
+            end
+        end
+        displayList = expanded
 
     else
         -- Character tab: items this character has configured,
@@ -174,6 +192,7 @@ local function BuildDisplayList()
                     item      = item,
                     count     = entry.count,
                     mgrCounts = mgrCounts,
+                    stateKey  = tostring(itemID),
                 })
             end
         end
@@ -187,7 +206,23 @@ local function BuildDisplayList()
             return a.item.name < b.item.name
         end)
 
-        displayList = rows
+        -- Expand mat rows for expanded items
+        local expanded = {}
+        for _, row in ipairs(rows) do
+            table.insert(expanded, row)
+            if expandState[row.stateKey] and row.item.mats then
+                for _, matStr in ipairs(row.item.mats) do
+                    local _, _, amount, name = string.find(matStr, "^(%d+)x?%s+(.+)$")
+                    if not name then name = matStr; amount = 1 end
+                    table.insert(expanded, {
+                        type   = "mat",
+                        name   = name,
+                        amount = tonumber(amount) or 1,
+                    })
+                end
+            end
+        end
+        displayList = expanded
     end
 end
 
@@ -208,6 +243,19 @@ function CM_ManagerView_UpdateRows()
         for _, cell in ipairs(row.cells or {}) do cell:Hide() end
 
         if entry then
+
+            if entry.type == "mat" then
+                -- Mat sub-row
+                row.icon:Hide()
+                row.label:ClearAllPoints()
+                row.label:SetPoint("LEFT", row, "LEFT", 20, 0)
+                row.label:SetText("|cffaaaaaa" .. entry.name .. " x" .. (entry.amount or 1) .. "|r")
+                row:RegisterForClicks("LeftButtonUp")
+                row:SetScript("OnClick", nil)
+                row:SetScript("OnEnter", function() GameTooltip:Hide() end)
+                row:SetScript("OnLeave", function() GameTooltip:Hide() end)
+                row:Show()
+            else
             -- Icon
             local tex = ConsumesManagerBar_GetItemTexture
                 and ConsumesManagerBar_GetItemTexture(entry.item.id)
@@ -293,14 +341,29 @@ function CM_ManagerView_UpdateRows()
                 end
             end
 
-            -- Tooltip
+            -- Tooltip + right-click expand
+            row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
             row:SetScript("OnEnter", function()
                 GameTooltip:SetOwner(row, "ANCHOR_RIGHT")
                 GameTooltip:SetHyperlink("item:" .. entry.item.id)
+                if entry.item.mats and table.getn(entry.item.mats) > 0 then
+                    GameTooltip:AddLine("|cffaaaaaaRight-click: show mats|r")
+                end
                 GameTooltip:Show()
             end)
             row:SetScript("OnLeave", function() GameTooltip:Hide() end)
+            row:SetScript("OnClick", function()
+                if arg1 == "RightButton" and entry.stateKey then
+                    expandState[entry.stateKey] = not expandState[entry.stateKey]
+                    BuildDisplayList()
+                    -- Clamp scrollPos in case list shrank
+                    local maxScroll = math.max(0, table.getn(displayList) - ROWS_VISIBLE)
+                    if scrollPos > maxScroll then scrollPos = maxScroll end
+                    CM_ManagerView_UpdateRows()
+                end
+            end)
             row:Show()
+            end  -- end of non-mat else
         else
             row.icon:Hide()
             row.label:SetText("")
@@ -538,20 +601,26 @@ local function CreateManagerFrame()
     frame.minBtn = minBtn
 
     -- Separator under tab strip
-    local sep = frame:CreateTexture(nil, "ARTWORK")
-    sep:SetHeight(1)
-    sep:SetPoint("TOPLEFT",  frame, "TOPLEFT",   8, -(HEADER_HEIGHT - 2))
-    sep:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -24, -(HEADER_HEIGHT - 2))
+    local sepFrame = CreateFrame("Frame", nil, frame)
+    sepFrame:SetHeight(1)
+    sepFrame:SetPoint("TOPLEFT",  frame, "TOPLEFT",   8, -(HEADER_HEIGHT - 2))
+    sepFrame:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -24, -(HEADER_HEIGHT - 2))
+    local sep = sepFrame:CreateTexture(nil, "ARTWORK")
+    sep:SetAllPoints(sepFrame)
     sep:SetTexture("Interface\\Buttons\\WHITE8x8")
     sep:SetVertexColor(0.4, 0.4, 0.4, 1)
+    frame.sep1 = sepFrame
 
     -- Separator under column headers
-    local sep2 = frame:CreateTexture(nil, "ARTWORK")
-    sep2:SetHeight(1)
-    sep2:SetPoint("TOPLEFT",  frame, "TOPLEFT",   8, -(HEADER_HEIGHT + COL_H_HEIGHT))
-    sep2:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -24, -(HEADER_HEIGHT + COL_H_HEIGHT))
+    local sep2Frame = CreateFrame("Frame", nil, frame)
+    sep2Frame:SetHeight(1)
+    sep2Frame:SetPoint("TOPLEFT",  frame, "TOPLEFT",   8, -(HEADER_HEIGHT + COL_H_HEIGHT))
+    sep2Frame:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -24, -(HEADER_HEIGHT + COL_H_HEIGHT))
+    local sep2 = sep2Frame:CreateTexture(nil, "ARTWORK")
+    sep2:SetAllPoints(sep2Frame)
     sep2:SetTexture("Interface\\Buttons\\WHITE8x8")
     sep2:SetVertexColor(0.3, 0.3, 0.3, 1)
+    frame.sep2 = sep2Frame
 
     -- Scroll up button
     local btnUp = CreateFrame("Button", nil, frame)
@@ -629,7 +698,7 @@ local function CreateManagerFrame()
     rowFrames = {}
     local rowTop = HEADER_HEIGHT + COL_H_HEIGHT + 2
     for i = 1, ROWS_VISIBLE do
-        local row = CreateFrame("Frame", "CM_MVRow" .. i, frame)
+        local row = CreateFrame("Button", "CM_MVRow" .. i, frame)
         row:SetHeight(ROW_HEIGHT)
         row:SetPoint("TOPLEFT",  frame, "TOPLEFT",  8,  -(rowTop + (i - 1) * ROW_HEIGHT))
         row:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -24, -(rowTop + (i - 1) * ROW_HEIGHT))
@@ -682,6 +751,8 @@ function CM_ManagerView_ApplyMinimized()
         if frame.scrollBar   then frame.scrollBar:Hide()   end
         if frame.btnUp       then frame.btnUp:Hide()       end
         if frame.btnDown     then frame.btnDown:Hide()     end
+        if frame.sep1        then frame.sep1:Hide()        end
+        if frame.sep2        then frame.sep2:Hide()        end
         if frame.tabs        then
             for _, t in ipairs(frame.tabs) do t:Hide() end
         end
@@ -701,7 +772,9 @@ function CM_ManagerView_ApplyMinimized()
         local winHeight = HEADER_HEIGHT + COL_H_HEIGHT + ROWS_VISIBLE * ROW_HEIGHT + 30
         frame:SetHeight(winHeight)
         if frame.refreshBtn then frame.refreshBtn:Show() end
-        if frame.minBtn then frame.minBtn:SetText("_") end
+        if frame.sep1       then frame.sep1:Show()       end
+        if frame.sep2       then frame.sep2:Show()       end
+        if frame.minBtn     then frame.minBtn:SetText("_") end
         RebuildTabs()
         RebuildColumnHeaders()
         CM_ManagerView_UpdateRows()
@@ -741,15 +814,10 @@ function CM_ManagerView_Refresh()
     scrollPos = 0
     BuildDisplayList()
 
-    -- Resize based on active tab column count
-    local colCount
-    if activeTab == "overview" then
-        colCount = table.getn(charNames) + 1  -- chars + Total
-    else
-        colCount = table.getn(CM_ManagerView._tabManagers) + 1  -- managers + own count
-    end
+    -- Always size to overview width so switching tabs never shrinks the window
+    local overviewColCount = table.getn(charNames) + 1  -- chars + Total
     local newWidth = math.max(MIN_WIDTH,
-        LABEL_WIDTH + colCount * COL_WIDTH + 40)
+        LABEL_WIDTH + overviewColCount * COL_WIDTH + 40)
     frame:SetWidth(newWidth)
 
     RebuildTabs()
