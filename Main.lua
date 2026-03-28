@@ -2626,7 +2626,53 @@ function ConsumesManager_CreateSettingsContent(parentFrame)
     yOff = yOff - LH - 4
 
     -- -----------------------------------------------------------------------
-    -- Section 2: Bar Management
+    -- Section 2: Startup Behavior
+    -- -----------------------------------------------------------------------
+    yOff = yOff - 8
+    SectionTitle("Startup Behavior")
+
+    local function MakeCheckbox(label, isChecked, onChange)
+        local cb = CreateFrame("CheckButton", nil, child)
+        cb:SetWidth(16); cb:SetHeight(16)
+        cb:SetPoint("TOPLEFT", child, "TOPLEFT", 0, yOff)
+        cb:SetNormalTexture("Interface\\Buttons\\UI-CheckBox-Up")
+        cb:SetPushedTexture("Interface\\Buttons\\UI-CheckBox-Down")
+        cb:SetHighlightTexture("Interface\\Buttons\\UI-CheckBox-Highlight")
+        cb:SetCheckedTexture("Interface\\Buttons\\UI-CheckBox-Check")
+        cb:SetChecked(isChecked)
+        local lbl = child:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        lbl:SetPoint("LEFT", cb, "RIGHT", 4, 0)
+        lbl:SetText(label)
+        cb:SetScript("OnClick", onChange)
+        yOff = yOff - LH
+        return cb
+    end
+
+    -- Show buff bar on login
+    MakeCheckbox(
+        "Show buff bar on login",
+        ConsumesManager_Options.showBarOnLogin ~= false,  -- default true
+        function()
+            ConsumesManager_Options.showBarOnLogin = this:GetChecked() == 1
+        end)
+    SubLabel("When unchecked, bars start hidden. Use /cmbar to show.")
+    yOff = yOff - 4
+
+    -- Show stock overview on login (manager only)
+    if ConsumesManager_CharOptions and ConsumesManager_CharOptions.isManager then
+        MakeCheckbox(
+            "Show stock overview on login",
+            ConsumesManager_Options.showOverviewOnLogin ~= false,  -- default true
+            function()
+                ConsumesManager_Options.showOverviewOnLogin = this:GetChecked() == 1
+            end)
+        SubLabel("When unchecked, the stock overview window won't")
+        SubLabel("open automatically when you log in.")
+        yOff = yOff - 4
+    end
+
+    -- -----------------------------------------------------------------------
+    -- Section 3: Bar Management
     -- -----------------------------------------------------------------------
     yOff = yOff - 8
     SectionTitle("Bar Management")

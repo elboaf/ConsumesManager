@@ -295,7 +295,9 @@ bagUpdateFrame:SetScript("OnEvent", function()
                 if loginElapsed >= 2.0 then
                     loginFrame:SetScript("OnUpdate", nil)
                     CM_FileSync.ReadAll()
-                    if CM_ManagerView_Open then CM_ManagerView_Open() end
+                    local showOverview = not (ConsumesManager_Options
+                        and ConsumesManager_Options.showOverviewOnLogin == false)
+                    if showOverview and CM_ManagerView_Open then CM_ManagerView_Open() end
                 end
             end)
         end

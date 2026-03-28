@@ -1266,6 +1266,13 @@ function ConsumesManagerBar_UpdateBars()
             if isHidden and not editMode then
                 f:Hide()
                 if f.nameLabel then f.nameLabel:Hide() end
+                -- Explicitly hide UIParent-parented handles that UpdateSingleBar
+                -- would normally hide but won't be called for hidden bars
+                if f.orientBtn  then f.orientBtn:Hide()  end
+                if f.dragHandle then f.dragHandle:Hide() end
+                if f.swapBtns   then
+                    for _, sb in ipairs(f.swapBtns) do sb:Hide() end
+                end
             else
                 ConsumesManagerBar_UpdateSingleBar(f, items, barID)
                 if editMode then
@@ -1814,6 +1821,11 @@ function ConsumesManagerBar_Initialize()
         mouseoverVisible = false
         ConsumesManagerBar_SetAllBarsAlpha(0)
         ConsumesManagerBar_CreateMouseoverHitFrame()
+    end
+
+    -- Hide bars on login if setting says so (default: show)
+    if ConsumesManager_Options and ConsumesManager_Options.showBarOnLogin == false then
+        for _, f in pairs(barFrames) do f:Hide() end
     end
 
     -- Attach OnUpdate to the primary bar's frame
