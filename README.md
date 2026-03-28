@@ -146,6 +146,12 @@ In edit mode:
 
 ## Changelog
 
+### 2.3.2.2
+- Stock overview right-click on any item row expands its crafting reagent list inline
+- Stock overview window width no longer shrinks when switching to a character tab and pressing Refresh
+- Stock overview separator lines correctly hidden when minimized
+- Added startup behavior settings — show/hide buff bar on login and show/hide stock overview on login are now configurable per-character in the Settings tab
+
 ### 2.3.2
 - All settings and selected items are now **per-character** — configuring consumables on one character no longer affects others
 - Manager mode and exclude flags moved to a dedicated per-character saved variable (`ConsumesManager_CharOptions`)
@@ -155,12 +161,13 @@ In edit mode:
 - Stock overview character tabs now show manager columns alongside the character's own count for deficit tracking
 - Stock overview minimize button collapses the window to a slim draggable title bar
 - Stock overview Total column moved to leftmost position
-- Manager AH shopping list BOP items show per-character inline rows (e.g. `Juju Power [0] (Rels)`) instead of section headers
+- Manager AH shopping list BOP items show per-character inline label (e.g. `Juju Power [0] (Rels)`) instead of section headers
+- Manager AH shopping list sorted by non-BOP first then BOP; within each group by quantity ascending
 - Shopping list right-click mat expansion fixed for non-manager characters
-- Shopping list now shows all mats including non-auctionable ones; non-auctionable mats are display-only (clicking does nothing)
-- Network tab is now scrollable
+- Shopping list now shows all mats including non-auctionable ones; non-auctionable mats are display-only
 - Minimap right-click now toggles bar edit mode for all characters
 - Edit mode exit now correctly hides orientation, drag, and swap handles for hidden bars
+- Network tab is now scrollable
 - Added Dragonbreath Chili to itemlist (id 12217, spellId 15852)
 - Fixed `string.gmatch` and `string.match` calls replaced with Lua 5.0 compatible `string.gfind` and `string.find`
 - Fixed modulo operator (`%`) replaced with `math.mod` for Lua 5.0 compatibility
