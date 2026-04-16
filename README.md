@@ -145,6 +145,13 @@ In edit mode:
 ---
 
 ## Changelog
+### 2.3.2.4
+- Buff bar icons now show the native WoW item tooltip on hover instead of a custom one; buff status and click hint are appended below
+- Buff bar icons now display a numeric cooldown countdown centered on the icon when an item is on cooldown, rendered above the cooldown sweep in a large bold font with drop shadow
+
+### 2.3.2.3
+Added blackroot brew to items list
+Updated incorrect priority values for existing items
 
 ### 2.3.2.2
 - Stock overview right-click on any item row expands its crafting reagent list inline
