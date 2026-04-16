@@ -1093,16 +1093,11 @@ end
 
 function ConsumesManagerBar_ShowTooltip(iconFrame, barID)
     GameTooltip:SetOwner(iconFrame, "ANCHOR_RIGHT")
-    local itemName = consumablesList[iconFrame.itemID]
-    if not itemName then
-        GameTooltip:SetText("Unknown Item (ID: " .. tostring(iconFrame.itemID) .. ")")
-        GameTooltip:Show()
-        return
-    end
 
-    GameTooltip:SetText(itemName)
+    -- Use the native item tooltip as the base
+    GameTooltip:SetHyperlink("item:" .. tostring(iconFrame.itemID))
 
-    -- Count
+    -- Append buff status
     local realmName  = GetRealmName()
     local playerName = UnitName("player")
     local count = 0
@@ -1111,35 +1106,14 @@ function ConsumesManagerBar_ShowTooltip(iconFrame, barID)
         local inv = ConsumesManager_Data[realmName][playerName]["inventory"] or {}
         count = inv[iconFrame.itemID] or 0
     end
-    if count > 0 then
-        GameTooltip:AddLine("Count: " .. count, 1, 1, 1)
-    else
-        GameTooltip:AddLine("Count: 0 (Not in bags)", 1, 0.5, 0.5)
-    end
 
-    -- Which bar
-    local currentBarID = GetItemBarID(iconFrame.itemID)
-    local barName = "Unknown"
-    for _, bar in ipairs(GetBars()) do
-        if bar.id == currentBarID then barName = bar.name; break end
-    end
-    GameTooltip:AddLine("Bar: " .. barName, 0.7, 0.7, 0.7)
-
-    -- Glow
-    if glowReminders[iconFrame.itemID] == false then
-        GameTooltip:AddLine("Glow Reminder: DISABLED", 1, 0.3, 0.3)
-    else
-        GameTooltip:AddLine("Glow Reminder: ENABLED", 0.3, 1, 0.3)
-    end
-
-    -- Buff
     if buffedItems[iconFrame.itemID] then
         local buffCount = buffedItems[iconFrame.itemID]
         local timeLeft  = buffTimes[iconFrame.itemID]
         if buffCount == 2 then
-            GameTooltip:AddLine("Currently Active (Both Weapons)", 0, 1, 0)
+            GameTooltip:AddLine("Active (Both Weapons)", 0, 1, 0)
         else
-            GameTooltip:AddLine("Currently Active", 0, 1, 0)
+            GameTooltip:AddLine("Active", 0, 1, 0)
         end
         if timeLeft and timeLeft > 0 then
             local ts = ConsumesManagerBar_FormatTime(timeLeft)
@@ -1147,33 +1121,20 @@ function ConsumesManagerBar_ShowTooltip(iconFrame, barID)
                 GameTooltip:AddLine("Time Left: " .. ts, 1, 1, 0.5)
             end
         elseif timeLeft == -1 then
-            GameTooltip:AddLine("Duration: Weapon Enchant", 0.8, 0.8, 0.8)
+            GameTooltip:AddLine("Weapon Enchant", 0.8, 0.8, 0.8)
         end
     else
         if count > 0 then
-            if glowReminders[iconFrame.itemID] == false then
-                GameTooltip:AddLine("NOT BUFFED (Glow disabled)", 0.7, 0.7, 0.7)
-            else
-                GameTooltip:AddLine("NOT BUFFED - Click to use", 1, 0.3, 0.3)
-            end
+            GameTooltip:AddLine("Not active", 1, 0.3, 0.3)
         else
-            GameTooltip:AddLine("Not available in bags", 0.7, 0.7, 0.7)
+            GameTooltip:AddLine("Not in bags", 0.7, 0.7, 0.7)
         end
     end
 
     if editMode then
-        GameTooltip:AddLine("Right-click to move to a different bar", 0.8, 0.8, 1)
-        GameTooltip:AddLine("Use arrows to reorder within this bar", 0.8, 0.8, 0.8)
-    else
-        if count > 0 then
-            if buffedItems[iconFrame.itemID] then
-                GameTooltip:AddLine("Click to refresh buff", 0.5, 1, 0.5)
-            else
-                GameTooltip:AddLine("Click to apply buff", 0.5, 1, 0.5)
-            end
-        else
-            GameTooltip:AddLine("Item not available", 1, 0.5, 0.5)
-        end
+        GameTooltip:AddLine("Right-click: move to bar", 0.8, 0.8, 1)
+    elseif count > 0 then
+        GameTooltip:AddLine("Click to use", 0.5, 1, 0.5)
     end
 
     GameTooltip:Show()
@@ -1364,6 +1325,18 @@ function ConsumesManagerBar_UpdateSingleBar(frame, items, barID)
             cd:SetAllPoints(iconFrame)
             iconFrame.cooldown = cd
 
+            local cdtFrame = CreateFrame("Frame", nil, iconFrame)
+            cdtFrame:SetAllPoints(iconFrame)
+            cdtFrame:SetFrameLevel(iconFrame:GetFrameLevel() + 10)
+            local cdt = cdtFrame:CreateFontString(nil, "OVERLAY", "NumberFontNormalLarge")
+            cdt:SetPoint("CENTER", cdtFrame, "CENTER", 0, 0)
+            cdt:SetJustifyH("CENTER")
+            cdt:SetTextColor(1, 1, 1)
+            cdt:SetShadowColor(0, 0, 0, 1)
+            cdt:SetShadowOffset(1, -1)
+            cdt:SetAlpha(1.0)
+            iconFrame.cdText = cdt
+
             local bh = iconFrame:CreateTexture(nil, "OVERLAY")
             bh:SetWidth(icoS + 17 * scale)
             bh:SetHeight(icoS + 17 * scale)
@@ -1432,10 +1405,31 @@ function ConsumesManagerBar_UpdateSingleBar(frame, items, barID)
 
         ConsumesManagerBar_UpdateIconTimerDisplay(iconFrame, item)
 
-        -- Update cooldown sweep
+        -- Update cooldown sweep and numeric display
         if iconFrame.cooldown then
             local cdStart, cdDuration, cdEnable = GetItemCooldown(item.id)
             CooldownFrame_SetTimer(iconFrame.cooldown, cdStart, cdDuration, cdEnable)
+            if iconFrame.cdText then
+                if cdStart and cdDuration and cdDuration > 1.5 then
+                    local remaining = cdStart + cdDuration - GetTime()
+                    if remaining > 0 then
+                        if remaining >= 3600 then
+                            iconFrame.cdText:SetText(string.format("%dh", math.floor(remaining / 3600)))
+                        elseif remaining >= 60 then
+                            iconFrame.cdText:SetText(string.format("%dm", math.floor(remaining / 60)))
+                        else
+                            iconFrame.cdText:SetText(string.format("%d", math.ceil(remaining)))
+                        end
+                        iconFrame.cdText:Show()
+                    else
+                        iconFrame.cdText:SetText("")
+                        iconFrame.cdText:Hide()
+                    end
+                else
+                    iconFrame.cdText:SetText("")
+                    iconFrame.cdText:Hide()
+                end
+            end
         end
 
         if item.buffed then
