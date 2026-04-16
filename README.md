@@ -150,8 +150,8 @@ In edit mode:
 - Buff bar icons now display a numeric cooldown countdown centered on the icon when an item is on cooldown, rendered above the cooldown sweep in a large bold font with drop shadow
 
 ### 2.3.2.3
-Added blackroot brew to items list
-Updated incorrect priority values for existing items
+- Added blackroot brew to items list
+- Updated incorrect priority values for existing items
 
 ### 2.3.2.2
 - Stock overview right-click on any item row expands its crafting reagent list inline
